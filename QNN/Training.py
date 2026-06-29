@@ -9,7 +9,7 @@ import autograd.numpy as anp
 def compute_gradients(args, params, X_batch, Y_batch, U, U_params, embedding_type, circuit, cost_fn,
                       tag_cla10=True):
     """
-    使用pennylane内置的grad函数计算梯度。
+    Compute gradients using PennyLane's built-in grad function.
     """
     grad_fn = qml.grad(cost, argnum=1)
     gradients = grad_fn(args, params, X_batch, Y_batch, U, U_params, embedding_type, circuit, cost_fn,
@@ -18,13 +18,13 @@ def compute_gradients(args, params, X_batch, Y_batch, U, U_params, embedding_typ
 
 def one_hot_encode(y, num_classes):
     """
-    将标签转换为 one-hot 形式
-    :param y: 原始类别标签列表 (如 [1,6,4])
-    :param num_classes: 类别总数 (如 10)
-    :return: one-hot 编码矩阵
+    Convert labels to one-hot format
+    :param y: original class label list (e.g. [1,6,4])
+    :param num_classes: total number of classes (e.g. 10)
+    :return: one-hot encoded matrix
     """
-    one_hot = anp.zeros((len(y), num_classes))  # 创建 (样本数, 类别数) 的零矩阵
-    one_hot[anp.arange(len(y)), y] = 1  # 将对应类别位置设为 1
+    one_hot = anp.zeros((len(y), num_classes))  # Create zero matrix of shape (num_samples, num_classes)
+    one_hot[anp.arange(len(y)), y] = 1  # Set the corresponding class position to 1
     return one_hot
 
 def square_loss(labels, predictions):
@@ -51,9 +51,9 @@ def cross_entropy_multi(y, predictions):
     return -1 * loss
 
 def cal_accuracy(Y, predictions):
-    predicted_classes = np.argmax(predictions, axis=1)  # 取最大值索引
+    predicted_classes = np.argmax(predictions, axis=1)  # Get index of maximum value
 
-    # 计算正确预测的个数
+    # Count correct predictions
     true_classes = np.argmax(Y, axis=1)
     correct_predictions = np.sum(predicted_classes == true_classes)
     accuracy = correct_predictions / len(Y)
@@ -62,9 +62,9 @@ def cal_accuracy(Y, predictions):
 import autograd.numpy as anp
 
 def softmax(x):
-    """数值稳定的 Softmax 实现，确保总和等于 1"""
-    exp_x = anp.exp(x - anp.max(x))  # 防止溢出
-    return exp_x / anp.sum(exp_x)  # 归一化，确保总和为 1
+    """Numerically stable Softmax implementation, ensures sum equals 1"""
+    exp_x = anp.exp(x - anp.max(x))  # Prevent overflow
+    return exp_x / anp.sum(exp_x)  # Normalize to ensure sum is 1
 
 
 
@@ -78,14 +78,14 @@ def cost(args,params, X, Y, U, U_params, embedding_type, circuit, cost_fn,tag_cl
 
         # qnn
         predictions = [QCNN_circuit.QCNN(args,x, params_circuit, U, U_params, embedding_type, cost_fn=cost_fn) for x in X]
-        weights = anp.reshape(params_dense_w[:80], (8, 10)) #参数改维度，是为了后续方便矩阵相乘
+        weights = anp.reshape(params_dense_w[:80], (8, 10))  # Reshape parameters for matrix multiplication
         out_list = []
         for i in range(len(predictions)): # batch
-            out = anp.dot(anp.array(predictions[i]), weights) # 全连接层FC： 权重相乘
-            out = anp.add(out, params_dense_b)  # 全连接层FC：bisi 相加
-            out = softmax(out) # 激活层
+            out = anp.dot(anp.array(predictions[i]), weights)  # FC layer: weight multiplication
+            out = anp.add(out, params_dense_b)  # FC layer: bias addition
+            out = softmax(out)  # Activation layer
             out_list.append(out)
-        # 攻击QNN隐私漏洞用的，不用管
+        # Used for QNN privacy vulnerability attack, can be ignored
         if tag_test=="MIA":
             return (out_list,[np.max(out_list[i]) for i in range(len(out_list))],
                     [int(np.argmax(out_list[i])==Y[i]) for i in range(len(out_list))],
@@ -97,13 +97,11 @@ def cost(args,params, X, Y, U, U_params, embedding_type, circuit, cost_fn,tag_cl
             return acc
         # compute loss
         else:
-            Y = list(one_hot_encode(Y, 10))
-            Y = np.array(Y)
-            out_list = np.array(out_list)
-            loss = [cross_entropy_multi([Y[i]], [out_list[i]]).numpy() for i in range(len(out_list))]
-            return loss
+            Y = one_hot_encode(Y, 10)
+            loss = sum(cross_entropy_multi([Y[i]], [out_list[i]]) for i in range(len(out_list)))
+            return loss / len(out_list)
 
-    else: # 不用管
+    else:  # Can be ignored
         if circuit == 'QCNN':
             predictions = [QCNN_circuit.QCNN(x, params, U, U_params, embedding_type, cost_fn=cost_fn) for x in X]
         elif circuit == 'Hierarchical':
@@ -120,7 +118,7 @@ def cost(args,params, X, Y, U, U_params, embedding_type, circuit, cost_fn,tag_cl
 def circuit_training(args,X_train, Y_train, U, U_params, embedding_type, circuit,
                      cost_fn='cross_entropy', cla10=False,test=False):
 
-    # 选择参数
+    # Select parameters
     if circuit == 'QCNN':
         if U == 'U_SU4_no_pooling' or U == 'U_SU4_1D' or U == 'U_9_1D':
             total_params = U_params * 3
@@ -132,7 +130,7 @@ def circuit_training(args,X_train, Y_train, U, U_params, embedding_type, circuit
     elif circuit == 'Hardware_efficiency':
         total_params = args.n_qubit*3
 
-    # 后处理层
+    # Post-processing layer
     if cla10:
         total_params_w = 8*10    # w
         total_params_b = 1*10    # b
@@ -160,19 +158,19 @@ def circuit_training(args,X_train, Y_train, U, U_params, embedding_type, circuit
                 assert isinstance(params, object)
                 # gradients = compute_gradients(args, params, X_batch, Y_batch, U, U_params, embedding_type, circuit,
                 #                               cost_fn)
-                import su_20250221
-                time_record1, time_save = su_20250221.read_curr_time()
+                # import su_20250221
+                # time_record1, time_save = su_20250221.read_curr_time()
 
-                # cost：QNN的前向传播（执行一次QNN）
-                # step_and_cost：更新
+                # cost: QNN forward pass (execute QNN once)
+                # step_and_cost: update parameters
                 params, cost_new = opt.step_and_cost(lambda v: cost(args,v, X_batch, Y_batch, U, U_params, embedding_type, circuit, cost_fn,tag_cla10=True,tag_test=False),
                                                               params)
                 loss_batch.append(cost_new)
-                time_record2, time_save = su_20250221.read_curr_time()
-                print(time_record2-time_record1)
-                exit()
+                # time_record2, time_save = su_20250221.read_curr_time()
+                # print(time_record2-time_record1)
+                # exit()
         else:
-            indices = np.random.choice(len(X_train), args.batch_size, replace=False)  # 随机抽样
+            indices = np.random.choice(len(X_train), args.batch_size, replace=False)  # Random sampling
             X_batch = X_train[indices]
             Y_batch = Y_train[indices]
 

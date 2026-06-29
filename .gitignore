@@ -1,0 +1,5 @@
+QNN/dataset/dataset_all.plk
+HQNN/result/
+HQNN/*.pth
+__pycache__/
+*.pyc

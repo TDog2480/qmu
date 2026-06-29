@@ -11,7 +11,7 @@ from process import get_features
 
 def MIA_train_process_pytorch():
 
-    checkpoint = torch.load(f"model_original.pth")
+    checkpoint = torch.load("model_0324_original_5_0.1_8.pth", weights_only=False)
 
     seed = checkpoint['args'].seed
     np.random.seed(seed)
@@ -20,13 +20,13 @@ def MIA_train_process_pytorch():
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    # === 1. 加载你原来的训练模型 & 参数 ===
+    # === 1. Load original trained model & parameters ===
     model = ConvQNN(checkpoint['args'])
     model.load_state_dict(checkpoint["model_state_dict"])
 
     model.eval()
 
-    # === 2. 加载数据（500个train + 500个test样本）===
+    # === 2. Load data (500 train + 500 test samples) ===
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     trainset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
     testset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
@@ -37,22 +37,22 @@ def MIA_train_process_pytorch():
     loader_train = DataLoader(Subset(trainset, indices_train), batch_size=1, shuffle=False)
     loader_test = DataLoader(Subset(testset, indices_test), batch_size=1, shuffle=False)
 
-    # === 3. 生成 MIA 攻击输入数据（模型输出概率 + label）===
+    # === 3. Generate MIA attack input data (model output probability + label) ===
     x_data_MIA = []
     y_data_MIA = []
 
-    features_train, features_label4, y_data_MIA_label4 = get_features(loader_train, 1)  # 成员样本
-    features_test,_,_ = get_features(loader_test, 0)    # 非成员样本
+    features_train, features_label4, y_data_MIA_label4 = get_features(loader_train, 1, model)  # Member samples
+    features_test, _, _ = get_features(loader_test, 0, model)    # Non-member samples
 
     x_data_MIA = np.vstack([features_train, features_test])  # N x 10
-    y_data_MIA = np.array(y_data_MIA)
+    y_data_MIA = np.array([1] * len(features_train) + [0] * len(features_test))
 
     # label 4
     x_attack_tensor = torch.tensor(features_label4, dtype=torch.float32)
     y_attack_tensor = torch.tensor(y_data_MIA_label4, dtype=torch.float32).unsqueeze(1)
 
 
-    # === 4. 构造攻击模型（用 PyTorch 实现 MLP）===
+    # === 4. Build attack model (MLP with PyTorch) ===
     class AttackMLP(nn.Module):
         def __init__(self):
             super().__init__()
@@ -73,7 +73,7 @@ def MIA_train_process_pytorch():
     optimizer = torch.optim.Adam(attack_model.parameters(), lr=0.01)
     loss_fn = nn.BCELoss()
 
-    # === 5. 拆分训练/测试集 ===
+    # === 5. Split train/test set ===
     indices = np.random.permutation(len(x_data_MIA))
     x_data_MIA, y_data_MIA = x_data_MIA[indices], y_data_MIA[indices]
 
@@ -86,7 +86,7 @@ def MIA_train_process_pytorch():
     x_test_tensor = torch.tensor(x_test, dtype=torch.float32)
     y_test_tensor = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1)
 
-    # === 6. 训练攻击模型 ===
+    # === 6. Train attack model ===
     for epoch in range(1000):
         attack_model.train()
         outputs = attack_model(x_train_tensor)
@@ -95,15 +95,16 @@ def MIA_train_process_pytorch():
         loss.backward()
         optimizer.step()
 
-        # 评估
+        # Evaluate
         attack_model.eval()
         with torch.no_grad():
             y_pred = attack_model(x_attack_tensor)
             acc = accuracy_score(y_attack_tensor.numpy(), (y_pred.numpy() > 0.5).astype(int))
 
-        print(f"Epoch {epoch+1}, Loss: {loss.item():.4f}, MIA Acc: {acc*100:.2f}%")
+        if (epoch + 1) % 10 == 0: 
+            print(f"Epoch {epoch+1}, Loss: {loss.item():.4f}, MIA Acc: {acc*100:.2f}%")
 
-    print(f"✅ 最终 MIA 攻击准确率: {acc*100:.2f}%")
+    print(f"Final MIA attack accuracy: {acc*100:.2f}%")
 
     attack_model_path = "attack_model_mia.pth"
     torch.save(attack_model.state_dict(), attack_model_path)
@@ -111,7 +112,7 @@ def MIA_train_process_pytorch():
     attack_model = AttackMLP()
     attack_model.load_state_dict(torch.load("attack_model_mia.pth"))
     attack_model.eval()
-    print("✅ 已加载 MIA 攻击模型")
+    print("Loaded MIA attack model")
 
     # import matplotlib.pyplot as plt
     #
@@ -127,7 +128,7 @@ def MIA_train_process_pytorch():
 
 def MIA_attack():
 
-    checkpoint = torch.load(f"model_original.pth")
+    checkpoint = torch.load("model_0324_original_5_0.1_8.pth", weights_only=False)
 
     model = ConvQNN(checkpoint['args'])
 
@@ -138,7 +139,7 @@ def MIA_attack():
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    # === 2. 加载数据（500个train + 500个test样本）===
+    # === 2. Load data (500 train + 500 test samples) ===
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     trainset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
     testset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
@@ -150,14 +151,14 @@ def MIA_attack():
     loader_test = DataLoader(Subset(testset, indices_test), batch_size=1, shuffle=False)
 
 
-    checkpoint = torch.load(f"result/seed/model_MU_gradient.pth")
-    # === 1. 加载你原来的训练模型 & 参数 ===
+    checkpoint = torch.load(f"result/seed/model_MU_gradient_U8R1.pth", weights_only=False)
+    # === 1. Load original trained model & parameters ===
     # model = ConvQNN(checkpoint['args'])
     model.load_state_dict(checkpoint["model_state_dict"])
 
     model.eval()
 
-    # === 3. 生成 MIA 攻击输入数据（模型输出概率 + label）===
+    # === 3. Generate MIA attack input data (model output probability + label) ===
     x_data_MIA = []
     y_data_MIA = []
 
@@ -186,12 +187,12 @@ def MIA_attack():
                     y_data_MIA_label4.append(1)
         return features, features_label4, y_data_MIA_label4
 
-    features_train, features_label4, y_data_MIA_label4 = get_features(loader_train, 1)  # 成员样本
+    features_train, features_label4, y_data_MIA_label4 = get_features(loader_train, 1)  # Member samples
 
     x_attack_tensor = torch.tensor(features_label4, dtype=torch.float32)
     y_attack_tensor = torch.tensor(y_data_MIA_label4, dtype=torch.float32).unsqueeze(1)
 
-    # === 4. 构造攻击模型（用 PyTorch 实现 MLP）===
+    # === 4. Build attack model (MLP with PyTorch) ===
     class AttackMLP(nn.Module):
         def __init__(self):
             super().__init__()
@@ -212,7 +213,7 @@ def MIA_attack():
     attack_model = AttackMLP()
     attack_model.load_state_dict(torch.load("attack_model_mia.pth"))
     attack_model.eval()
-    # print("✅ 已加载 MIA 攻击模型")
+    # print("Loaded MIA attack model")
     y_pred = attack_model(x_attack_tensor)
     acc = accuracy_score(y_attack_tensor.numpy(), (y_pred.detach().numpy() > 0.5).astype(int))
     print(f"MIA Acc: {acc * 100:.2f}%")

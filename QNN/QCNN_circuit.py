@@ -107,10 +107,10 @@ dev = qml.device('default.mixed', wires = 8)
 @qml.qnode(dev)
 def QCNN(args,X, params_list, U, U_params,embedding_type='Amplitude', cost_fn='mse'):
 
-    # Data Embedding 编码层 E(x)
+    # Data embedding layer E(x)
     embedding.data_embedding(X, embedding_type=embedding_type)
 
-    # 选择需要用的参数
+    # Select parameters to use
     for i in range(args.n_layers):
         params = params_list[i*args.total_params:(i+1)*args.total_params]
     # Quantum Convolutional Neural Network
@@ -160,14 +160,14 @@ def QCNN(args,X, params_list, U, U_params,embedding_type='Amplitude', cost_fn='m
 
 @qml.qnode(dev)
 def qcnn_state(params, args, x, embedding_type):
-    # 你原来切 params_list，现在用 params 替代（直接一维）
+    # Previously sliced params_list, now replaced with params (directly 1D)
     embedding.data_embedding(x, embedding_type=embedding_type)
 
     for i in range(args.n_layers):
         param_slice = params[i*args.total_params:(i+1)*args.total_params]
         Hardware_efficiency(args, param_slice)
 
-    # state = qml.state()  # 明确指定测量哪些 qubits
+    # state = qml.state()  # explicitly specify which qubits to measure
 
     return qml.state()
 
@@ -176,7 +176,7 @@ def make_metric_fn(args, params,x, embedding_type):
     full_metric = qml.metric_tensor(qcnn_state)
     qfi_full = full_metric(params, args, x, embedding_type)
 
-    # 取对角线近似
+    # Diagonal approximation
     qfi_diag = np.diag(qfi_full)
 
     # print("✅ QFI shape:", qfi_diag.shape)

@@ -28,7 +28,7 @@ def dataset_balance(data, num):
     selected_Y = []
 
     for label in range(10):
-        # 找到当前类别的所有索引
+        # Find all indices for the current class
         indices = np.where(Y == label)[0]
         selected_indices = np.random.choice(indices, num, replace=False)
         selected_X.append(x[selected_indices])

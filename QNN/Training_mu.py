@@ -10,7 +10,7 @@ import pickle
 def compute_gradients(args, params, X_batch, Y_batch, U, U_params, embedding_type, circuit, cost_fn,
                       tag_cla10=True):
     """
-    使用pennylane内置的grad函数计算梯度。
+    Compute gradients using PennyLane's built-in grad function.
     """
     grad_fn = qml.grad(cost, argnum=1)
     gradients = grad_fn(args, params, X_batch, Y_batch, U, U_params, embedding_type, circuit, cost_fn,
@@ -19,13 +19,13 @@ def compute_gradients(args, params, X_batch, Y_batch, U, U_params, embedding_typ
 
 def one_hot_encode(y, num_classes):
     """
-    将标签转换为 one-hot 形式
-    :param y: 原始类别标签列表 (如 [1,6,4])
-    :param num_classes: 类别总数 (如 10)
-    :return: one-hot 编码矩阵
+    Convert labels to one-hot format
+    :param y: original class label list (e.g. [1,6,4])
+    :param num_classes: total number of classes (e.g. 10)
+    :return: one-hot encoded matrix
     """
-    one_hot = anp.zeros((len(y), num_classes))  # 创建 (样本数, 类别数) 的零矩阵
-    one_hot[anp.arange(len(y)), y] = 1  # 将对应类别位置设为 1
+    one_hot = anp.zeros((len(y), num_classes))  # Create zero matrix of shape (num_samples, num_classes)
+    one_hot[anp.arange(len(y)), y] = 1  # Set the corresponding class position to 1
     return one_hot
 
 def square_loss(labels, predictions):
@@ -52,9 +52,9 @@ def cross_entropy_multi(y, predictions):
     return -1 * loss
 
 def cal_accuracy(Y, predictions):
-    predicted_classes = np.argmax(predictions, axis=1)  # 取最大值索引
+    predicted_classes = np.argmax(predictions, axis=1)  # Get index of maximum value
 
-    # 计算正确预测的个数
+    # Count correct predictions
     true_classes = np.argmax(Y, axis=1)
     correct_predictions = np.sum(predicted_classes == true_classes)
     accuracy = correct_predictions / len(Y)
@@ -63,9 +63,9 @@ def cal_accuracy(Y, predictions):
 import autograd.numpy as anp
 
 def softmax(x):
-    """数值稳定的 Softmax 实现，确保总和等于 1"""
-    exp_x = anp.exp(x - anp.max(x))  # 防止溢出
-    return exp_x / anp.sum(exp_x)  # 归一化，确保总和为 1
+    """Numerically stable Softmax implementation, ensures sum equals 1"""
+    exp_x = anp.exp(x - anp.max(x))  # Prevent overflow
+    return exp_x / anp.sum(exp_x)  # Normalize to ensure sum is 1
 
 
 def cost(args,params, X, Y, U, U_params, embedding_type, circuit, cost_fn,R_U=-1,tag_test=False):

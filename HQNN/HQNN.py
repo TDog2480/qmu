@@ -11,22 +11,22 @@ import random
 import pickle
 
 qubit_num = n_qubits = 8
-# 定义量子设备
+# Define quantum device
 dev = qml.device('default.qubit', wires=qubit_num)
 
 
-# 计算测试集的准确率
+# Calculate test set accuracy
 def calculate_accuracy(model, testloader):
-    model.eval()  # 设置模型为评估模式
+    model.eval()  # Set model to evaluation mode
     correct = 0
     total = 0
     with torch.no_grad():
         for data in testloader:
             inputs, labels = data
             outputs = model(inputs)
-            _, predicted = torch.max(outputs, 1)  # 获取每个样本的预测标签
-            total += labels.size(0)  # 样本数量
-            correct += (predicted == labels).sum().item()  # 计算正确预测的数量
+            _, predicted = torch.max(outputs, 1)  # Get predicted label for each sample
+            total += labels.size(0)  # Number of samples
+            correct += (predicted == labels).sum().item()  # Count correct predictions
 
     accuracy = correct / total
     return accuracy
@@ -48,14 +48,14 @@ def extract_parameters(model):
     return classical_params, quantum_params
 
 
-# 定义量子神经网络
+# Define quantum neural network
 @qml.qnode(dev,interface="torch")
 def qnode(inputs,QNN_param):
 
     # E(x)
-    AmplitudeEmbedding(inputs, wires=range(n_qubits), normalize=True) # 振幅编码，真机很难实现，经典数据扔到量子态
+    AmplitudeEmbedding(inputs, wires=range(n_qubits), normalize=True)  # Amplitude encoding; hard to implement on real hardware, encodes classical data into quantum state
 
-    # PQC层 U(theta)
+    # PQC layer U(theta)
     for k in range(QNN_param.shape[0]):
         for j in range(n_qubits):
             qml.U3(*QNN_param[k][j], wires=[j]) #
@@ -64,17 +64,17 @@ def qnode(inputs,QNN_param):
             qml.CNOT(wires=[j, j + 1])
         qml.CNOT(wires=[n_qubits - 1, 0])
 
-    # 测量层
+    # Measurement layer
     return [qml.expval(qml.PauliZ(i)) for i in range(n_qubits)]
 
 
 class ConvQNN(nn.Module):
     def __init__(self,args):
         super(ConvQNN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 5, kernel_size=5, stride=1, padding=2)  # 卷积层
-        self.pool = nn.MaxPool2d(2, 2)  # 池化层
-        self.fc1 = nn.Linear(980, 256)  # 全连接层16:3136 5:980
-        self.fc2 = nn.Linear(8, 10)  # 输出层
+        self.conv1 = nn.Conv2d(1, 5, kernel_size=5, stride=1, padding=2)  # Convolutional layer
+        self.pool = nn.MaxPool2d(2, 2)  # Pooling layer
+        self.fc1 = nn.Linear(980, 256)  # Fully connected layer 16:3136 5:980
+        self.fc2 = nn.Linear(8, 10)  # Output layer
         self.softmax = nn.LogSoftmax(dim=1)
         weight_shapes = {"QNN_param": (args.n_layers, args.n_qubit, 3)}
         self.qlayer = qml.qnn.TorchLayer(qnode, weight_shapes)
@@ -83,20 +83,20 @@ class ConvQNN(nn.Module):
             self.qlayer.qnode_weights["QNN_param"].uniform_(-np.pi, np.pi)
 
     def forward(self, x):
-        # 前处理层 CNN
-        x = self.pool(F.relu(self.conv1(x)))  # 卷积和池化
-        x = x.view(x.shape[0], -1)  # 展平
-        x = self.fc1(x)  # 全连接层  变成256：目标是方便编码进去量子态
-        x = F.leaky_relu(x, negative_slope=0.01) # 激活层：不改变维度
+        # Pre-processing layer CNN
+        x = self.pool(F.relu(self.conv1(x)))  # Convolution and pooling
+        x = x.view(x.shape[0], -1)  # Flatten
+        x = self.fc1(x)  # Fully connected layer, outputs 256: facilitates encoding into quantum state
+        x = F.leaky_relu(x, negative_slope=0.01)  # Activation layer: does not change dimension
 
         # np.save(x)
-        x = torch.stack([self.qlayer(xi / (torch.norm(xi) + 1e-8)) for xi in x]) # QNN 目标：放去天衍真机
-        # 读取天衍真机结构x
-        x = self.fc2(x)  # 全连接层 满足10分类， 后处理层
+        x = torch.stack([self.qlayer(xi / (torch.norm(xi) + 1e-8)) for xi in x])  # QNN target: deploy on real quantum hardware
+        # Read real quantum hardware structure x
+        x = self.fc2(x)  # Fully connected layer for 10-class output, post-processing layer
         return x
 
 def process(args):
-    # 载入MNIST数据
+    # Load MNIST data
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     trainset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
     testset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
@@ -108,11 +108,11 @@ def process(args):
     trainloader = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True)
     testloader = DataLoader(test_subset, batch_size=args.batch_size, shuffle=False)
 
-    # 初始化模型
+    # Initialize model
     model = ConvQNN(args)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)
-    # 训练模型
+    # Train model
 
     lists = [[], [], []]
 
@@ -125,7 +125,7 @@ def process(args):
             inputs, labels = data
             optimizer.zero_grad()
 
-            # 前向传播
+            # Forward pass
             outputs = model(inputs)
             loss = criterion(outputs, labels)
 
@@ -134,7 +134,7 @@ def process(args):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-            # 反向传播
+            # Backward pass
             loss.backward()
             optimizer.step()
 
