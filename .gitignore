@@ -1,5 +1,9 @@
 QNN/dataset/dataset_all.plk
+QNN/result
+QNN/logs
 HQNN/result/
 HQNN/*.pth
 __pycache__/
 *.pyc
+*.pkl
+*.sbatch

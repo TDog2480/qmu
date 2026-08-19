@@ -1,9 +1,13 @@
 # Loads and Processes the data that will be used in QCNN and Hierarchical Classifier Training
 import numpy as np
-import tensorflow as tf
 from sklearn.decomposition import PCA
-from tensorflow.keras.models import Model
-from tensorflow.keras import layers, losses
+try:
+    import tensorflow as tf
+    from tensorflow.keras.models import Model
+    from tensorflow.keras import layers, losses
+    _HAS_TF = True
+except ImportError:
+    _HAS_TF = False
 
 import su_20250221
 pca32 = ['pca32-1', 'pca32-2', 'pca32-3', 'pca32-4']

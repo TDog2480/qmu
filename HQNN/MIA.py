@@ -101,8 +101,9 @@ def MIA_train_process_pytorch():
             y_pred = attack_model(x_attack_tensor)
             acc = accuracy_score(y_attack_tensor.numpy(), (y_pred.numpy() > 0.5).astype(int))
 
-        if (epoch + 1) % 10 == 0: 
-            print(f"Epoch {epoch+1}, Loss: {loss.item():.4f}, MIA Acc: {acc*100:.2f}%")
+        if (epoch + 1) % 10 == 0:
+            train_acc = accuracy_score(y_train_tensor.numpy(), (outputs.detach().numpy() > 0.5).astype(int))
+            print(f"Epoch {epoch+1}, Loss: {loss.item():.4f}, Train Acc: {train_acc*100:.2f}%, MIA Acc: {acc*100:.2f}%")
 
     print(f"Final MIA attack accuracy: {acc*100:.2f}%")
 

@@ -9,7 +9,11 @@ import Training
 from Benchmarking import Encoding_to_Embedding, accuracy_test
 import pickle
 import su_20250221
-import tensorflow as tf
+try:
+    import tensorflow as tf
+    _HAS_TF = True
+except ImportError:
+    _HAS_TF = False
 from sklearn.decomposition import PCA
 import os
 import random
@@ -168,7 +172,8 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
-    tf.random.set_seed(args.seed)
+    if _HAS_TF:
+        tf.random.set_seed(args.seed)
     os.environ['PYTHONHASHSEED'] = str(args.seed)
 
     su_20250221.creat_file(args.save_path)
