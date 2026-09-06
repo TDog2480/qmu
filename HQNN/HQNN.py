@@ -189,7 +189,7 @@ if __name__ == "__main__":
     parser.add_argument('-learning_rate', type=float, default=0.1, help="learning_rate")
 
     parser.add_argument('-n_train', type=int, default=1000, help="n_train")
-    parser.add_argument('-n_test', type=int, default=500, help="n_test")
+    parser.add_argument('-n_test', type=int, default=1000, help="n_test")
 
     args = parser.parse_args()
 

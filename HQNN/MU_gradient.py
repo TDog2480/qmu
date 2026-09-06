@@ -79,17 +79,24 @@ def process_continue_training(args):
     model.load_state_dict(checkpoint["model_state_dict"])
     # optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
+    # Re-seed from the original run so any remaining randomness (dataloader
+    # shuffling, etc.) is reproducible and tied to that model.
+    seed = checkpoint['args'].seed
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.manual_seed(seed)
+
     # === 1. Load model, data, and select training set ===
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     trainset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
     testset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
 
-    # Sample indices
-    # train_indices = checkpoint['indices'][0]
-    # test_indices = checkpoint['indices'][1]
-
-    train_indices = random.sample(range(len(trainset)), args.n_train)
-    test_indices = random.sample(range(len(testset)), args.n_test)
+    # Use the exact train/test split the original model was trained on, so the
+    # forget set unlearned here is the same class-4 subset the MIA scripts
+    # evaluate against.
+    train_indices = checkpoint['indices'][0]
+    test_indices = checkpoint['indices'][1]
 
     # Split R/U
     def split_indices(dataset, indices, label=4):
@@ -183,7 +190,9 @@ def process_continue_training(args):
             torch.save({
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
-                "lists": lists
+                "lists": lists,
+                "args": checkpoint["args"],
+                "indices": checkpoint["indices"],
             }, f"{args.save_path}/model_MU_gradient_0922{epoch}{args.seed}.pth")
 
 
@@ -191,7 +200,9 @@ def process_continue_training(args):
     torch.save({
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
-        "lists": lists
+        "lists": lists,
+        "args": checkpoint["args"],
+        "indices": checkpoint["indices"],
     }, f"{args.save_path}/model_MU_gradient_U8R1.pth")
 
     with open(f"{args.save_path}/trained_params_{args.name}.pkl", "wb") as f:

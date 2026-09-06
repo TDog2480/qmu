@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from sklearn.metrics import accuracy_score
 import numpy as np
 import random
@@ -41,8 +40,13 @@ def MIA_train_process_pytorch():
     x_data_MIA = []
     y_data_MIA = []
 
-    features_train, features_label4, y_data_MIA_label4 = get_features(loader_train, 1, model)  # Member samples
-    features_test, _, _ = get_features(loader_test, 0, model)    # Non-member samples
+    features_train, features_label4_train, y_label4_train = get_features(loader_train, 1, model)  # Member samples
+    features_test, features_label4_test, y_label4_test = get_features(loader_test, 0, model)    # Non-member samples
+
+    # Label-4 eval subset must include both members and non-members, or accuracy
+    # just measures "always predict member" against an all-member set.
+    features_label4 = features_label4_train + features_label4_test
+    y_data_MIA_label4 = y_label4_train + y_label4_test
 
     x_data_MIA = np.vstack([features_train, features_test])  # N x 10
     y_data_MIA = np.array([1] * len(features_train) + [0] * len(features_test))
@@ -160,35 +164,12 @@ def MIA_attack():
     model.eval()
 
     # === 3. Generate MIA attack input data (model output probability + label) ===
-    x_data_MIA = []
-    y_data_MIA = []
-
-    def get_features(loader, label):
-        features = []
-        features_label4 = []
-        y_data_MIA_label4 = []
-        for x, y in loader:
-            with torch.no_grad():
-                output = model(x)
-                prob = F.softmax(output, dim=1).squeeze().numpy()
-
-                max_prob = np.max(prob)
-                pred_label = np.argmax(prob)
-                correct = int(pred_label == y.item())
-
-                loss = F.cross_entropy(output, y).item()
-
-                feature_vector = list(prob) + [max_prob, correct, loss]
-                # feature_vector = [loss]
-
-                features.append(feature_vector)
-                y_data_MIA.append(label)
-                if y == 4:
-                    features_label4.append(feature_vector)
-                    y_data_MIA_label4.append(1)
-        return features, features_label4, y_data_MIA_label4
-
-    features_train, features_label4, y_data_MIA_label4 = get_features(loader_train, 1)  # Member samples
+    # Label-4 eval subset must include both members and non-members, or accuracy
+    # just measures "always predict member" against an all-member set.
+    _, features_label4_train, y_label4_train = get_features(loader_train, 1, model)  # Member samples
+    _, features_label4_test, y_label4_test = get_features(loader_test, 0, model)  # Non-member samples
+    features_label4 = features_label4_train + features_label4_test
+    y_data_MIA_label4 = y_label4_train + y_label4_test
 
     x_attack_tensor = torch.tensor(features_label4, dtype=torch.float32)
     y_attack_tensor = torch.tensor(y_data_MIA_label4, dtype=torch.float32).unsqueeze(1)

@@ -197,8 +197,13 @@ def VQC_train_process(original_ckpt_path):
     checkpoint, model, loader_train, loader_test = _load_seeded_model_and_loaders(original_ckpt_path)
 
     # === Generate attack input data (model output probability + label) ===
-    features_train, features_label4, y_data_MIA_label4 = get_features(loader_train, 1, model)  # Member samples
-    features_test, _, _ = get_features(loader_test, 0, model)  # Non-member samples
+    features_train, features_label4_train, y_label4_train = get_features(loader_train, 1, model)  # Member samples
+    features_test, features_label4_test, y_label4_test = get_features(loader_test, 0, model)  # Non-member samples
+
+    # Label-4 eval subset must include both members and non-members, or accuracy
+    # just measures "always predict member" against an all-member set.
+    features_label4 = features_label4_train + features_label4_test
+    y_data_MIA_label4 = y_label4_train + y_label4_test
 
     x_data_MIA = np.vstack([features_train, features_test])  # N x 13
     y_data_MIA = np.array([1] * len(features_train) + [0] * len(features_test))
@@ -253,13 +258,17 @@ def VQC_train_process(original_ckpt_path):
 
 
 def VQC_attack(original_ckpt_path, unlearned_ckpt_path):
-    checkpoint, model, loader_train, _ = _load_seeded_model_and_loaders(original_ckpt_path)
+    checkpoint, model, loader_train, loader_test = _load_seeded_model_and_loaders(original_ckpt_path)
 
     unlearned_ckpt = torch.load(unlearned_ckpt_path, weights_only=False)
     model.load_state_dict(unlearned_ckpt["model_state_dict"])
     model.eval()
 
-    _, features_label4, y_data_MIA_label4 = get_features(loader_train, 1, model)
+    # Label-4 eval subset must include both members and non-members (see VQC_train_process).
+    _, features_label4_train, y_label4_train = get_features(loader_train, 1, model)
+    _, features_label4_test, y_label4_test = get_features(loader_test, 0, model)
+    features_label4 = features_label4_train + features_label4_test
+    y_data_MIA_label4 = y_label4_train + y_label4_test
 
     with open("attack_scaler_vqc.pkl", "rb") as f:
         saved = pickle.load(f)

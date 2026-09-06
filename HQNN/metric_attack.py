@@ -9,12 +9,20 @@ single scalar computed from the target model's softmax output:
   Entropy attack                               — low entropy → member
   Modified-entropy     (Song & Mittal, 2021)   — lower mod-entropy → member
 
-Thresholds are calibrated on the *original* model (retain = member,
-test = non-member), then applied unchanged to the *unlearned* model's
-forget set.  Successful unlearning is indicated when the forget-set
-membership rate approaches the attack's false positive rate (FPR) on
-the held-out test set — meaning the forget set is now statistically
-indistinguishable from samples the model never trained on.
+Thresholds are calibrated on the *original* model with ALL training samples
+as members and ALL test samples as non-members — the forget class appears on
+both sides, so the threshold cannot use "is this a 4" as a proxy for
+membership.  The frozen thresholds are then applied to four disjoint groups,
+for both the original and the unlearned model:
+
+    member,     non-4   (retain)  — should stay classified "member" (utility)
+    member,     class-4 (forget)  — should drop to the class-4 non-member rate
+    non-member, non-4             — global false-positive baseline
+    non-member, class-4           — class-matched target for the forget row
+
+Successful unlearning: the unlearned model's forget-set membership rate
+approaches the class-4 *non-member* rate — not 50%, and not the global FPR,
+since class 4 may be intrinsically easier or harder than the average digit.
 
 Usage:
     python metric_attack.py
@@ -33,6 +41,9 @@ from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
 from HQNN import ConvQNN
+
+
+FORGET_CLASS = 4  # MNIST digit being unlearned — class 4 throughout this codebase
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +132,51 @@ def membership_rate(records, key, threshold, higher_is_member):
 
 
 # ---------------------------------------------------------------------------
+# Dataset groups: membership x forget-class
+# ---------------------------------------------------------------------------
+
+GROUPS = ("member_non4", "member_c4", "nonmember_non4", "nonmember_c4")
+GROUP_LABEL = {
+    "member_non4":    "member,     non-4   (retain)",
+    "member_c4":      "member,     class-4 (forget)",
+    "nonmember_non4": "non-member, non-4",
+    "nonmember_c4":   "non-member, class-4",
+}
+
+
+def _build_group_loaders(orig_ckpt):
+    """Four disjoint groups, split by membership (the original model's
+    train/test split, read straight from the checkpoint) and by whether the
+    ground-truth label is the forget class."""
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,)),
+    ])
+    trainset = datasets.MNIST(root="./data", train=True,  download=True, transform=transform)
+    testset  = datasets.MNIST(root="./data", train=False, download=True, transform=transform)
+
+    def split_by_class(ds, idx):
+        non4, c4 = [], []
+        for i in idx:
+            (c4 if ds[i][1] == FORGET_CLASS else non4).append(i)
+        return non4, c4
+
+    m_non4, m_c4   = split_by_class(trainset, orig_ckpt["indices"][0])
+    nm_non4, nm_c4 = split_by_class(testset,  orig_ckpt["indices"][1])
+
+    spec = {
+        "member_non4":    (trainset, m_non4),
+        "member_c4":      (trainset, m_c4),
+        "nonmember_non4": (testset,  nm_non4),
+        "nonmember_c4":   (testset,  nm_c4),
+    }
+    loaders = {n: DataLoader(Subset(ds, idx), batch_size=1, shuffle=False)
+               for n, (ds, idx) in spec.items()}
+    sizes = {n: len(idx) for n, (ds, idx) in spec.items()}
+    return loaders, sizes
+
+
+# ---------------------------------------------------------------------------
 # Main evaluation pipeline
 # ---------------------------------------------------------------------------
 
@@ -135,87 +191,95 @@ def run_metric_attacks(original_ckpt_path, unlearned_ckpt_path):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,)),
-    ])
-    trainset = datasets.MNIST(root="./data", train=True,  download=True, transform=transform)
-    testset  = datasets.MNIST(root="./data", train=False, download=True, transform=transform)
+    loaders, sizes = _build_group_loaders(orig_ckpt)
+    print("Group sizes:")
+    for name in GROUPS:
+        print(f"  {GROUP_LABEL[name]:<32} {sizes[name]:>5}")
 
-    train_indices = orig_ckpt["indices"][0]
-    test_indices  = orig_ckpt["indices"][1]
+    # --- Per-sample metrics on all four groups, both models ---
+    print("\nComputing metrics on ORIGINAL model …")
+    orig = {name: compute_metrics(model, loaders[name]) for name in GROUPS}
 
-    # Retain = train samples whose label ≠ 4 (first 500 used, matching MIA.py)
-    retain_idx = [i for i in train_indices if trainset[i][1] != 4][:500]
-    forget_idx = [i for i in train_indices if trainset[i][1] == 4]
+    unl_ckpt = torch.load(unlearned_ckpt_path, weights_only=False)
+    model.load_state_dict(unl_ckpt["model_state_dict"])
+    print("Computing metrics on UNLEARNED model …")
+    unl = {name: compute_metrics(model, loaders[name]) for name in GROUPS}
 
-    loader_retain = DataLoader(Subset(trainset, retain_idx), batch_size=1, shuffle=False)
-    loader_forget = DataLoader(Subset(trainset, forget_idx), batch_size=1, shuffle=False)
-    loader_test   = DataLoader(Subset(testset, test_indices[:500]), batch_size=1, shuffle=False)
+    # --- Calibrate thresholds on the ORIGINAL model --------------------------
+    # Members = all training samples, non-members = all test samples.  Class 4
+    # sits on BOTH sides (member_c4 is the forget set; nonmember_c4 are true
+    # class-4 non-members), so the threshold sweep cannot latch onto
+    # "class-4-ness" as a stand-in for membership.  The forget set does enter
+    # the member pool here, but a single scalar threshold can't overfit ~100
+    # points among ~1000, and it is calibrated on the original model then
+    # frozen before being applied to the unlearned model.
+    members_orig    = orig["member_non4"]    + orig["member_c4"]
+    nonmembers_orig = orig["nonmember_non4"] + orig["nonmember_c4"]
 
-    # --- Original model metrics ---
-    print("Computing metrics on ORIGINAL model …")
-    orig_retain = compute_metrics(model, loader_retain)
-    orig_forget = compute_metrics(model, loader_forget)
-    orig_test   = compute_metrics(model, loader_test)
-
-    # --- Calibrate thresholds ---
     thresholds = {}
     print(f"\n{'─'*72}")
-    print("Threshold calibration — retain (member) vs test (non-member),  original model")
+    print("Threshold calibration — all members vs all non-members, original model")
+    print("  (Acc/threshold are in-sample; AUC is the honest separability number)")
     print(f"{'─'*72}")
     print(f"{'Attack':<48} {'AUC':>6}  {'Acc':>6}  {'Threshold':>12}")
     print(f"{'─'*72}")
     for key, (higher, label) in ATTACKS.items():
-        thr, acc, auc = calibrate_threshold(orig_retain, orig_test, key, higher)
+        thr, acc, auc = calibrate_threshold(members_orig, nonmembers_orig, key, higher)
         thresholds[key] = thr
         print(f"{label:<48} {auc:>6.3f}  {acc:>6.3f}  {thr:>12.5f}")
 
-    # --- False positive rate on test set (the ideal unlearning target) ---
-    # After perfect unlearning, forget-set should look like the test set,
-    # so its membership rate should approach this FPR value, not 50%.
-    fpr = {}
+    # --- 4-group membership rates, per attack ------------------------------
+    #   member,     non-4    -> want it to STAY high      (utility preserved)
+    #   member,     class-4  -> want it to DROP to nonmember_c4   (forgotten)
+    #   non-member, non-4    -> global false-positive baseline
+    #   non-member, class-4  -> class-matched target for the forget row
+    def rates(records_by_group, key, higher):
+        return {g: membership_rate(records_by_group[g], key, thresholds[key], higher)
+                for g in GROUPS}
+
+    print(f"\n{'='*76}")
+    print("Membership rate by group  (fraction the frozen threshold calls 'member')")
+    print(f"{'='*76}")
+    summary = {}
     for key, (higher, label) in ATTACKS.items():
-        fpr[key] = membership_rate(orig_test, key, thresholds[key], higher)
+        o = rates(orig, key, higher)
+        u = rates(unl,  key, higher)
+        print(f"\n{label.strip()}")
+        print(f"  {'group':<32} {'n':>5}  {'orig':>8}  {'unlearned':>10}")
+        print(f"  {'-'*60}")
+        for g in GROUPS:
+            print(f"  {GROUP_LABEL[g]:<32} {sizes[g]:>5}  "
+                  f"{o[g]*100:>7.1f}%  {u[g]*100:>9.1f}%")
+        gap = u["member_c4"] - u["nonmember_c4"]
+        summary[key] = (o["member_c4"], u["member_c4"], u["nonmember_c4"], gap)
+        print(f"  -> forget rate {o['member_c4']*100:.1f}% -> {u['member_c4']*100:.1f}%   "
+              f"(class-4 non-member baseline {u['nonmember_c4']*100:.1f}%,  "
+              f"residual gap {gap*100:+.1f} pts)")
 
-    # --- Forget-set membership rate: original model ---
-    print(f"\n{'─'*72}")
-    print("Forget-set membership rate — ORIGINAL model")
-    print(f"  (Expect high: forget set was in training data)")
-    print(f"{'─'*72}")
-    print(f"{'Attack':<48} {'Member %':>10}  {'FPR (ideal)':>12}")
-    print(f"{'─'*72}")
+    # --- Compact cross-attack summary -------------------------------------
+    print(f"\n{'='*76}")
+    print("Forgetting summary — unlearned forget-set rate vs class-4 non-member baseline")
+    print("  gap ~ 0  -> forget set indistinguishable from a true class-4 non-member")
+    print("  gap > 0  -> residual membership signal (under-forgotten)")
+    print(f"{'='*76}")
+    print(f"{'Attack':<40} {'forget orig->unl':>18} {'c4 nonmem':>11} {'gap':>8}")
+    print(f"{'-'*76}")
     for key, (higher, label) in ATTACKS.items():
-        rate = membership_rate(orig_forget, key, thresholds[key], higher)
-        print(f"{label:<48} {rate * 100:>9.1f}%  {fpr[key] * 100:>11.1f}%")
+        o_f, u_f, u_nm, gap = summary[key]
+        print(f"{label.strip():<40} {o_f*100:>6.1f}% ->{u_f*100:>5.1f}%   "
+              f"{u_nm*100:>9.1f}%  {gap*100:>+7.1f}")
 
-    # --- Load unlearned model ---
-    unl_ckpt = torch.load(unlearned_ckpt_path, weights_only=False)
-    model.load_state_dict(unl_ckpt["model_state_dict"])
-
-    # --- Forget-set membership rate: unlearned model ---
-    print(f"\n{'─'*72}")
-    print("Forget-set membership rate — UNLEARNED model")
-    print(f"  (Ideal target = FPR column: rate at which the attack")
-    print(f"   mislabels true non-members as members on the test set)")
-    print(f"{'─'*72}")
-    print(f"{'Attack':<48} {'Member %':>10}  {'FPR (ideal)':>12}")
-    print(f"{'─'*72}")
-    unl_forget = compute_metrics(model, loader_forget)
-    for key, (higher, label) in ATTACKS.items():
-        rate = membership_rate(unl_forget, key, thresholds[key], higher)
-        print(f"{label:<48} {rate * 100:>9.1f}%  {fpr[key] * 100:>11.1f}%")
-
-    # --- Distribution shift summary ---
-    print(f"\n{'─'*55}")
-    print("Metric distribution shift on forget set (mean)")
-    print(f"{'─'*55}")
-    print(f"{'Metric':<16} {'Before':>10} {'After':>10} {'Δ':>10}")
-    print(f"{'─'*55}")
+    # --- Metric distribution shift on the forget set ---------------------
+    print(f"\n{'─'*62}")
+    print("Forget-set metric shift (mean over class-4 training samples)")
+    print(f"{'─'*62}")
+    print(f"{'Metric':<14} {'orig':>10} {'unlearned':>11} {'Δ':>10} {'c4 nonmem':>12}")
+    print(f"{'─'*62}")
     for key in ATTACKS:
-        before = np.mean([r[key] for r in orig_forget])
-        after  = np.mean([r[key] for r in unl_forget])
-        print(f"{key:<16} {before:>10.4f} {after:>10.4f} {after - before:>+10.4f}")
+        before = np.mean([r[key] for r in orig["member_c4"]])
+        after  = np.mean([r[key] for r in unl["member_c4"]])
+        baseln = np.mean([r[key] for r in unl["nonmember_c4"]])
+        print(f"{key:<14} {before:>10.4f} {after:>11.4f} {after - before:>+10.4f} {baseln:>12.4f}")
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +333,7 @@ def run_reference_comparison(original_ckpt_path, reference_ckpt_path, unlearned_
     trainset = datasets.MNIST(root="./data", train=True, download=True, transform=transform)
 
     train_indices = orig_ckpt["indices"][0]
-    forget_idx = [i for i in train_indices if trainset[i][1] == 4]
+    forget_idx = [i for i in train_indices if trainset[i][1] == FORGET_CLASS]
     loader_forget = DataLoader(Subset(trainset, forget_idx), batch_size=1, shuffle=False)
 
     # Load reference model (retrained from scratch without class 4)
