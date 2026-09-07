@@ -135,30 +135,28 @@ def process_continue_training(args):
     print(f"Current model accuracy on Test-U: {acc_u_before:.3f}")
 
     tag_U = True
-    tag_R = False
+    tag_R = True
     lists = [[],[],[]]
-    model.train()
+
 
     # === 3. Continue training ===
     for epoch in range(args.n_epochs):
+        model.train()
+
         trainloader_U = DataLoader(train_data_U, batch_size=args.batch_size, shuffle=True)
         running_loss = 0.0
         correct, total = 0, 0
-
-        # if epoch==8:
-        #     tag_R = True
-        #     tag_U = False
 
         if tag_U:
             for inputs, labels in trainloader_U:
                 optimizer.zero_grad()
                 outputs = model(inputs)
-                loss = torch.nn.functional.cross_entropy(outputs, labels)
-                loss = loss*-1
+                ce_loss = torch.nn.functional.cross_entropy(outputs, labels)
+                loss = ce_loss * -1
                 loss.backward()
                 optimizer.step()
 
-                running_loss += loss.item()
+                running_loss += ce_loss.item()
                 _, predicted = torch.max(outputs, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
@@ -180,7 +178,7 @@ def process_continue_training(args):
         acc_r = calculate_accuracy(model, test_r_loader)
         acc_u = calculate_accuracy(model, test_u_loader)
 
-        lists[0].append(running_loss / len(train_data_R))
+        lists[0].append(running_loss / len(trainloader_U))
         lists[1].append(acc_r)
         lists[2].append(acc_u)
 
@@ -203,10 +201,10 @@ def process_continue_training(args):
         "lists": lists,
         "args": checkpoint["args"],
         "indices": checkpoint["indices"],
-    }, f"{args.save_path}/model_MU_gradient_U8R1.pth")
+    }, f"{args.save_path}/model_MU_gradient_U8R1_seed{args.seed}.pth")
 
     with open(f"{args.save_path}/trained_params_{args.name}.pkl", "wb") as f:
-        pickle.dump([lists, args], f)
+        pickle.dump([lists, checkpoint["args"]], f)
 
 
 
@@ -221,6 +219,7 @@ if __name__ == "__main__":
     parser.add_argument('-save_path', type=str, default='result/seed', help="save path")
     parser.add_argument('-time_save', type=str, default='XX', help="save path")
     parser.add_argument('-name', type=str, default='XX', help="name")
+    parser.add_argument('-target_checkpoint', type=str, default='model_0324_original_5_0.1_8.pth', help="checkpoint to unlearn from")
 
     parser.add_argument('-n_qubit', type=int, default=8, help="n_qubit")
     parser.add_argument('-n_layers', type=int, default=1, help="n_layers")
