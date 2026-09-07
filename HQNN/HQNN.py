@@ -184,7 +184,7 @@ if __name__ == "__main__":
     parser.add_argument('-n_qubit', type=int, default=8, help="n_qubit")
     parser.add_argument('-n_layers', type=int, default=5, help="n_layers")
 
-    parser.add_argument('-n_epochs', type=int, default=25, help="n_epochs")
+    parser.add_argument('-n_epochs', type=int, default=10, help="n_epochs")
     parser.add_argument('-batch_size', type=int, default=8, help="batch_size")
     parser.add_argument('-learning_rate', type=float, default=0.1, help="learning_rate")
 
