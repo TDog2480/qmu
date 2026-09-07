@@ -53,6 +53,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 import mia_common as mc
+import roc_utils
 
 N_QUBITS = 8
 WIRES = range(N_QUBITS)
@@ -148,6 +149,10 @@ def main():
     parser.add_argument("--data-root", type=str, default="./data")
     parser.add_argument("--artifact", type=str, default="attack_model_qsvm.pkl")
     parser.add_argument("--scores-out", type=str, default="scores_qsvm.npz")
+    parser.add_argument("--roc-out", type=str, default="qsvm_attack_roc.png",
+                        help="path to save the QSVM attack's ROC plot; pass '' to skip")
+    parser.add_argument("--roc-npz-out", type=str, default=None,
+                        help="optional path to save raw fpr/tpr/thresholds (npz)")
     args = parser.parse_args()
 
     # ------------------------------------------------------------------
@@ -263,6 +268,14 @@ def main():
         scores_unlearned = best["svc"].decision_function(K_unl)
 
     mc.report(spec, scores_original, scores_unlearned, threshold, "QSVM attack")
+
+    # --- ROC curve for the QSVM attack (original model) ---------------------
+    roc_data = roc_utils.compute_roc(scores_original, spec.membership, higher_is_member=True)
+    if args.roc_out:
+        roc_utils.plot_roc(roc_data, args.roc_out,
+                            title="QSVM attack ROC (original model)", label="QSVM attack")
+    if args.roc_npz_out:
+        roc_utils.save_roc_data({"qsvm": roc_data}, args.roc_npz_out)
 
     with open(args.artifact, "wb") as f:
         pickle.dump({

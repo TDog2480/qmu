@@ -40,6 +40,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
+import roc_utils
 from HQNN import ConvQNN
 
 
@@ -132,6 +133,31 @@ def membership_rate(records, key, threshold, higher_is_member):
 
 
 # ---------------------------------------------------------------------------
+# ROC curves (the full TPR/FPR sweep the calibrate_threshold() AUCs come from)
+# ---------------------------------------------------------------------------
+
+def compute_roc_curves(members_orig, nonmembers_orig):
+    """
+    Full ROC curve (FPR, TPR at every threshold) for each of the four metric
+    attacks, computed on the same all-members-vs-all-non-members pool
+    (original model) that calibrate_threshold() uses for its single-point
+    AUC. Delegates to roc_utils.compute_roc(), so the AUC here is exactly
+    what calibrate_threshold() reports -- this is the curve "from which the
+    AUC is calculated," not a re-estimate of it.
+
+    Returns {attack_key: roc_utils roc_data dict} (see roc_utils.compute_roc).
+    """
+    roc_data = {}
+    for key, (higher, _label) in ATTACKS.items():
+        m_vals = np.array([r[key] for r in members_orig])
+        nm_vals = np.array([r[key] for r in nonmembers_orig])
+        scores = np.concatenate([m_vals, nm_vals])
+        labels = np.array([1] * len(m_vals) + [0] * len(nm_vals))
+        roc_data[key] = roc_utils.compute_roc(scores, labels, higher_is_member=higher)
+    return roc_data
+
+
+# ---------------------------------------------------------------------------
 # Dataset groups: membership x forget-class
 # ---------------------------------------------------------------------------
 
@@ -180,7 +206,8 @@ def _build_group_loaders(orig_ckpt):
 # Main evaluation pipeline
 # ---------------------------------------------------------------------------
 
-def run_metric_attacks(original_ckpt_path, unlearned_ckpt_path):
+def run_metric_attacks(original_ckpt_path, unlearned_ckpt_path,
+                        roc_plot_prefix="metric_attack_roc", roc_npz_path=None):
     # --- Load original model ---
     orig_ckpt = torch.load(original_ckpt_path, weights_only=False)
     model = ConvQNN(orig_ckpt["args"])
@@ -227,6 +254,19 @@ def run_metric_attacks(original_ckpt_path, unlearned_ckpt_path):
         thr, acc, auc = calibrate_threshold(members_orig, nonmembers_orig, key, higher)
         thresholds[key] = thr
         print(f"{label:<48} {auc:>6.3f}  {acc:>6.3f}  {thr:>12.5f}")
+
+    # --- ROC curves the AUCs above are computed from -----------------------
+    # calibrate_threshold() only reports the scalar AUC; this reruns the same
+    # score/label pair through roc_utils.compute_roc() to get the full
+    # FPR/TPR sweep, so the numbers in the table above and the curves below
+    # are guaranteed consistent with each other. Each attack gets its own
+    # exported PNG.
+    roc_data = compute_roc_curves(members_orig, nonmembers_orig)
+    labels_by_key = {key: label.strip() for key, (_higher, label) in ATTACKS.items()}
+    if roc_plot_prefix is not None:
+        roc_utils.plot_roc_curves(roc_data, labels_by_key, roc_plot_prefix)
+    if roc_npz_path is not None:
+        roc_utils.save_roc_data(roc_data, roc_npz_path)
 
     # --- 4-group membership rates, per attack ------------------------------
     #   member,     non-4    -> want it to STAY high      (utility preserved)
@@ -468,8 +508,25 @@ if __name__ == "__main__":
         help="Path to reference model (retrained without forget class). "
              "When provided, runs the reference comparison instead of metric attacks.",
     )
+    parser.add_argument(
+        "--roc-out-prefix",
+        default="metric_attack_roc",
+        help="Path prefix for the four separate TPR/FPR ROC plots (one PNG per attack), "
+             "saved as f'{prefix}_{attack_key}.png' e.g. 'metric_attack_roc_loss.png'. "
+             "Pass an empty string to skip plotting.",
+    )
+    parser.add_argument(
+        "--roc-npz-out",
+        default=None,
+        help="Optional path to save the raw FPR/TPR/threshold arrays (npz) backing the ROC plots, "
+             "for later re-plotting without rerunning the attacks.",
+    )
     args = parser.parse_args()
     if args.reference is not None:
         run_reference_comparison(args.original, args.reference, args.unlearned)
     else:
-        run_metric_attacks(args.original, args.unlearned)
+        run_metric_attacks(
+            args.original, args.unlearned,
+            roc_plot_prefix=args.roc_out_prefix or None,
+            roc_npz_path=args.roc_npz_out,
+        )

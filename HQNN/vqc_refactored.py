@@ -52,6 +52,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
 import mia_common as mc
+import roc_utils
 
 N_QUBITS = 4
 N_LAYERS = 2
@@ -176,6 +177,10 @@ def main():
     parser.add_argument("--artifact", type=str, default="attack_model_vqc.pth")
     parser.add_argument("--scaler-out", type=str, default="attack_scaler_vqc.pkl")
     parser.add_argument("--scores-out", type=str, default="scores_vqc.npz")
+    parser.add_argument("--roc-out", type=str, default="vqc_attack_roc.png",
+                        help="path to save the VQC attack's ROC plot; pass '' to skip")
+    parser.add_argument("--roc-npz-out", type=str, default=None,
+                        help="optional path to save raw fpr/tpr/thresholds (npz)")
     args = parser.parse_args()
 
     # ------------------------------------------------------------------
@@ -251,6 +256,14 @@ def main():
         scores_unlearned = vqc_scores(attack_model, x_unl_t)
 
     mc.report(spec, scores_original, scores_unlearned, threshold, "VQC attack")
+
+    # --- ROC curve for the VQC attack (original model) ---------------------
+    roc_data = roc_utils.compute_roc(scores_original, spec.membership, higher_is_member=True)
+    if args.roc_out:
+        roc_utils.plot_roc(roc_data, args.roc_out,
+                            title="VQC attack ROC (original model)", label="VQC attack")
+    if args.roc_npz_out:
+        roc_utils.save_roc_data({"vqc": roc_data}, args.roc_npz_out)
 
     torch.save(attack_model.state_dict(), args.artifact)
     with open(args.scaler_out, "wb") as f:
