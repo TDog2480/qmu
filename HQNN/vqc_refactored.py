@@ -179,8 +179,8 @@ def main():
     parser.add_argument("--scores-out", type=str, default="scores_vqc.npz")
     parser.add_argument("--roc-out", type=str, default="vqc_attack_roc.png",
                         help="path to save the VQC attack's ROC plot; pass '' to skip")
-    parser.add_argument("--roc-npz-out", type=str, default=None,
-                        help="optional path to save raw fpr/tpr/thresholds (npz)")
+    parser.add_argument("--roc-npz-out", type=str, default="vqc_attack_roc.npz",
+                        help="path to save raw fpr/tpr/thresholds (npz); pass '' to skip")
     args = parser.parse_args()
 
     # ------------------------------------------------------------------

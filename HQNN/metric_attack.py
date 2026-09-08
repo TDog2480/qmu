@@ -517,9 +517,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--roc-npz-out",
-        default=None,
-        help="Optional path to save the raw FPR/TPR/threshold arrays (npz) backing the ROC plots, "
-             "for later re-plotting without rerunning the attacks.",
+        default="metric_attack_roc.npz",
+        help="Path to save the raw FPR/TPR/threshold arrays (npz) backing the ROC plots -- "
+             "also what plot_combined_roc.py reads to overlay these attacks with the VQC/QSVM "
+             "attacks. Pass an empty string to skip saving.",
     )
     args = parser.parse_args()
     if args.reference is not None:
@@ -528,5 +529,5 @@ if __name__ == "__main__":
         run_metric_attacks(
             args.original, args.unlearned,
             roc_plot_prefix=args.roc_out_prefix or None,
-            roc_npz_path=args.roc_npz_out,
+            roc_npz_path=args.roc_npz_out or None,
         )
