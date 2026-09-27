@@ -128,6 +128,15 @@ def calibrate_threshold(member_records, nonmember_records, key, higher_is_member
     return best_thr, best_acc, auc
 
 
+def group_auc(member_records, nonmember_records, key, higher_is_member):
+    """Threshold-free separability of two groups on a single metric."""
+    m_vals  = np.array([r[key] for r in member_records])
+    nm_vals = np.array([r[key] for r in nonmember_records])
+    vals   = np.concatenate([m_vals, nm_vals])
+    labels = np.array([1] * len(m_vals) + [0] * len(nm_vals))
+    return float(roc_auc_score(labels, vals if higher_is_member else -vals))
+
+
 def membership_rate(records, key, threshold, higher_is_member):
     """Fraction of records classified as members by the threshold."""
     vals = np.array([r[key] for r in records])
@@ -244,7 +253,19 @@ def run_metric_attacks(original_ckpt_path, unlearned_ckpt_path):
     print(f"\n{'='*76}")
     print("Membership rate by group  (fraction the frozen threshold calls 'member')")
     print(f"{'='*76}")
+    # Class-matched AUCs: member vs non-member within the same class slice.
+    #   non-4   -> want it to STAY at the original level (utility preserved)
+    #   class-4 -> want it to DROP to ~0.5            (forgotten)
+    def class_aucs(records_by_group, key, higher):
+        return {
+            "non4": group_auc(records_by_group["member_non4"],
+                              records_by_group["nonmember_non4"], key, higher),
+            "c4":   group_auc(records_by_group["member_c4"],
+                              records_by_group["nonmember_c4"], key, higher),
+        }
+
     summary = {}
+    auc_summary = {}
     for key, (higher, label) in ATTACKS.items():
         o = rates(orig, key, higher)
         u = rates(unl,  key, higher)
@@ -260,6 +281,14 @@ def run_metric_attacks(original_ckpt_path, unlearned_ckpt_path):
               f"(class-4 non-member baseline {u['nonmember_c4']*100:.1f}%,  "
               f"residual gap {gap*100:+.1f} pts)")
 
+        o_auc = class_aucs(orig, key, higher)
+        u_auc = class_aucs(unl,  key, higher)
+        auc_summary[key] = (o_auc, u_auc)
+        print(f"  {'AUC (member vs non-member)':<38} {'orig':>8}  {'unlearned':>10}")
+        print(f"  {'-'*60}")
+        print(f"  {'non-4   (member vs non-member)':<38} {o_auc['non4']:>8.3f}  {u_auc['non4']:>10.3f}")
+        print(f"  {'class-4 (member vs non-member)':<38} {o_auc['c4']:>8.3f}  {u_auc['c4']:>10.3f}")
+
     # --- Compact cross-attack summary -------------------------------------
     print(f"\n{'='*76}")
     print("Forgetting summary — unlearned forget-set rate vs class-4 non-member baseline")
@@ -272,6 +301,19 @@ def run_metric_attacks(original_ckpt_path, unlearned_ckpt_path):
         o_f, u_f, u_nm, gap = summary[key]
         print(f"{label.strip():<40} {o_f*100:>6.1f}% ->{u_f*100:>5.1f}%   "
               f"{u_nm*100:>9.1f}%  {gap*100:>+7.1f}")
+
+    # --- Class-matched AUC summary ----------------------------------------
+    print(f"\n{'='*76}")
+    print("Class-matched AUC — member vs non-member within each class slice")
+    print("  non-4:   should stay near its original value (utility preserved)")
+    print("  class-4: should fall to ~0.5 after unlearning (forgotten)")
+    print(f"{'='*76}")
+    print(f"{'Attack':<40} {'non-4 orig->unl':>17} {'class-4 orig->unl':>19}")
+    print(f"{'-'*76}")
+    for key, (higher, label) in ATTACKS.items():
+        o_auc, u_auc = auc_summary[key]
+        print(f"{label.strip():<40} {o_auc['non4']:>7.3f} ->{u_auc['non4']:>6.3f}  "
+              f"{o_auc['c4']:>9.3f} ->{u_auc['c4']:>6.3f}")
 
     # --- Metric distribution shift on the forget set ---------------------
     print(f"\n{'─'*62}")
