@@ -36,13 +36,25 @@ Bandwidth is selected on the held-out rows, so the held-out AUC reported at the 
 is mildly optimistic (one hyperparameter's worth). Nothing else touches it.
 
 Usage:
-    python vqc_attack.py --original model_0324_original_5_0.1_8.pth \
+    python vqc_refactored.py --original model_0324_original_5_0.1_8.pth \
                          --unlearned result/seed/model_MU_gradient_U8R1.pth
 """
 
-import argparse
-import pickle
+"""
+NOTE from changes 9/27:
+ 
+Saves ROC data for both models, on the same held-out rows with the same frozen attack model:
+    roc_curve_output/vqc_attack_roc.npz            original model
+    roc_curve_output/vqc_attack_roc_unlearned.npz  unlearned model
+Also saves attack_model_vqc.pth, attack_scaler_vqc.pkl and scores_vqc.npz to roc_curve_output/.
+Then run roc_utils.py (original) and roc_unlearned_plot.py (unlearned) to plot.
+"""
 
+import argparse
+import os
+import pickle
+import sys
+ 
 import numpy as np
 import pennylane as qml
 import torch
@@ -50,28 +62,30 @@ import torch.nn as nn
 from pennylane.templates.embeddings import AngleEmbedding
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
-
+ 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # project root: mia_common, HQNN
 import mia_common as mc
 import roc_utils
-
+import roc_unlearned_plot
+ 
 N_QUBITS = 4
 N_LAYERS = 2
-
+ 
 # Embedding-bandwidth candidates for pi * tanh(bandwidth * z), same grid as
 # qsvm_attack.py for comparability. Picked via a short proxy training run.
 BANDWIDTHS = [0.1, 0.3, 1.0]
 SWEEP_EPOCHS = 100
 FULL_EPOCHS = 1000
-
+ 
 # Near-identity initialization std, to avoid the barren plateau that a full
 # uniform[-pi, pi] init tends to land on for an entangling ansatz like this one.
 INIT_STD = 0.01
-
+ 
 dev = qml.device("default.qubit", wires=N_QUBITS)
-
+ 
 CHUNK_ROTATIONS = ("X", "Y", "Z", "X")  # 4 chunks x N_QUBITS(4) values = 16 padded features
-
-
+ 
+ 
 def attack_embedding(inputs):
     """Data re-uploading: 16 padded values as 4 chunks of N_QUBITS, entangled between chunks."""
     for i, rotation in enumerate(CHUNK_ROTATIONS):
@@ -81,22 +95,22 @@ def attack_embedding(inputs):
             for j in range(N_QUBITS - 1):
                 qml.CNOT(wires=[j, j + 1])
             qml.CNOT(wires=[N_QUBITS - 1, 0])
-
-
+ 
+ 
 @qml.qnode(dev, interface="torch")
 def vqc_qnode(inputs, vqc_params):
     attack_embedding(inputs)
-
+ 
     for k in range(vqc_params.shape[0]):
         for j in range(N_QUBITS):
             qml.U3(*vqc_params[k][j], wires=[j])
         for j in range(N_QUBITS - 1):
             qml.CNOT(wires=[j, j + 1])
         qml.CNOT(wires=[N_QUBITS - 1, 0])
-
+ 
     return qml.expval(qml.PauliZ(0))
-
-
+ 
+ 
 class AttackVQC(nn.Module):
     def __init__(self, n_layers=N_LAYERS):
         super().__init__()
@@ -104,35 +118,35 @@ class AttackVQC(nn.Module):
         self.qlayer = qml.qnn.TorchLayer(vqc_qnode, weight_shapes)
         with torch.no_grad():
             self.qlayer.qnode_weights["vqc_params"].normal_(mean=0.0, std=INIT_STD)
-
+ 
     def forward(self, x):
         expval = self.qlayer(x)
         prob = (expval + 1.0) / 2.0
         prob = torch.clamp(prob, 1e-6, 1 - 1e-6)
         return prob.unsqueeze(-1)
-
-
+ 
+ 
 def prepare_inputs(x_raw, scaler, bandwidth):
     """Standardize with a pre-fit scaler, smoothly squash into rotation range, zero-pad 13 -> 16."""
     x_std = scaler.transform(x_raw)
     angles = np.pi * np.tanh(bandwidth * x_std)
     pad = np.zeros((angles.shape[0], 16 - angles.shape[1]))
     return np.hstack([angles, pad]).astype(np.float32)
-
-
+ 
+ 
 def as_tensor(x):
     return torch.tensor(x, dtype=torch.float32)
-
-
+ 
+ 
 @torch.no_grad()
 def vqc_scores(model, x_tensor):
     model.eval()
     return model(x_tensor).numpy().reshape(-1)
-
-
+ 
+ 
 def train_vqc(x_fit, y_fit, n_epochs, x_val=None, y_val=None, print_every=None):
     """Train a fresh AttackVQC on the attack-train rows.
-
+ 
     Progress reporting keeps two things apart that the old loop merged: training
     accuracy on the rows being fit (free -- reuses the forward pass already computed
     for the loss) and AUC on the held-out rows, which is the only number that says
@@ -141,7 +155,7 @@ def train_vqc(x_fit, y_fit, n_epochs, x_val=None, y_val=None, print_every=None):
     model = AttackVQC()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
     loss_fn = nn.BCELoss()
-
+ 
     y_fit_np = y_fit.numpy().reshape(-1)
     for epoch in range(n_epochs):
         model.train()
@@ -150,7 +164,7 @@ def train_vqc(x_fit, y_fit, n_epochs, x_val=None, y_val=None, print_every=None):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
+ 
         if print_every and (epoch + 1) % print_every == 0:
             fit_acc = float(((outputs.detach().numpy().reshape(-1) > 0.5).astype(int) == y_fit_np).mean())
             msg = f"Epoch {epoch + 1}, Loss: {loss.item():.4f}, Fit Acc: {fit_acc * 100:.2f}%"
@@ -158,13 +172,13 @@ def train_vqc(x_fit, y_fit, n_epochs, x_val=None, y_val=None, print_every=None):
                 val_auc = roc_auc_score(y_val, vqc_scores(model, x_val))
                 msg += f", Held-out AUC: {val_auc:.3f}"
             print(msg)
-
+ 
     val_auc = float("nan")
     if x_val is not None and len(np.unique(y_val)) > 1:
         val_auc = float(roc_auc_score(y_val, vqc_scores(model, x_val)))
     return model, val_auc
-
-
+ 
+ 
 def main():
     parser = argparse.ArgumentParser(description="VQC-based MIA attack, 4-group evaluation")
     parser.add_argument("--original", default="model_0324_original_5_0.1_8.pth",
@@ -174,15 +188,17 @@ def main():
     parser.add_argument("--epochs", type=int, default=FULL_EPOCHS)
     parser.add_argument("--forget-class", type=int, default=mc.FORGET_CLASS)
     parser.add_argument("--data-root", type=str, default="./data")
-    parser.add_argument("--artifact", type=str, default="attack_model_vqc.pth")
-    parser.add_argument("--scaler-out", type=str, default="attack_scaler_vqc.pkl")
-    parser.add_argument("--scores-out", type=str, default="scores_vqc.npz")
-    parser.add_argument("--roc-out", type=str, default="vqc_attack_roc.png",
-                        help="path to save the VQC attack's ROC plot; pass '' to skip")
-    parser.add_argument("--roc-npz-out", type=str, default="vqc_attack_roc.npz",
-                        help="path to save raw fpr/tpr/thresholds (npz); pass '' to skip")
+    parser.add_argument("--artifact", type=str, default=os.path.join("roc_curve_output", "attack_model_vqc.pth"))
+    parser.add_argument("--scaler-out", type=str, default=os.path.join("roc_curve_output", "attack_scaler_vqc.pkl"))
+    parser.add_argument("--scores-out", type=str, default=os.path.join("roc_curve_output", "scores_vqc.npz"))
+    parser.add_argument("--roc-npz-out", type=str, default=os.path.join("roc_curve_output", "vqc_attack_roc.npz"))
+    parser.add_argument("--roc-npz-unlearned-out", type=str,
+                        default=os.path.join("roc_curve_output", "vqc_attack_roc_unlearned.npz"))
     args = parser.parse_args()
-
+    os.makedirs("roc_curve_output", exist_ok=True)
+    if not os.path.exists(args.unlearned):
+        raise SystemExit(f"unlearned checkpoint not found: {args.unlearned}")
+ 
     # ------------------------------------------------------------------
     # Pool + features
     # ------------------------------------------------------------------
@@ -190,21 +206,19 @@ def main():
     mc.set_seed(int(getattr(ckpt["args"], "seed", 0)))
     model = mc.build_model(ckpt)
     print(f"[setup] target: {args.original}  (HQNN.ConvQNN, amplitude embedding)")
-
+ 
     spec = mc.build_pool_spec(ckpt, data_root=args.data_root, forget_class=args.forget_class)
     mc.describe_pool(spec)
-
+ 
     X_original = mc.features_for(model, spec)
-
     fit_rows = np.flatnonzero(spec.attack_train_mask)
-    val_rows = np.flatnonzero(spec.heldout_mask)
+    val_rows = np.flatnonzero(spec.heldout_mask) 
 
     # Scaler is fit on the attack-train rows only, then frozen.
     scaler = StandardScaler().fit(X_original[fit_rows])
-
     y_fit = torch.tensor(spec.membership[fit_rows], dtype=torch.float32).unsqueeze(1)
     y_val = spec.membership[val_rows]
-
+ 
     # ------------------------------------------------------------------
     # Sweep embedding bandwidth with a short proxy budget, scored by held-out AUC
     # ------------------------------------------------------------------
@@ -218,9 +232,9 @@ def main():
         print(f"  bandwidth={bandwidth:.2f}  held-out AUC={val_auc:.3f}")
         if val_auc > best_auc:
             best_auc, best_bandwidth = val_auc, bandwidth
-
+ 
     print(f"Best bandwidth: {best_bandwidth} (proxy held-out AUC={best_auc:.3f})")
-
+ 
     # ------------------------------------------------------------------
     # Full training run at the selected bandwidth
     # ------------------------------------------------------------------
@@ -230,17 +244,17 @@ def main():
         x_fit_t, y_fit, args.epochs, x_val_t, y_val, print_every=max(1, args.epochs // 10)
     )
     print(f"Final held-out AUC: {final_val_auc:.3f}")
-
+ 
     # ------------------------------------------------------------------
     # Score the original model's whole pool; calibrate and freeze the threshold
     # ------------------------------------------------------------------
     x_all_t = as_tensor(prepare_inputs(X_original, scaler, best_bandwidth))
     scores_original = vqc_scores(attack_model, x_all_t)
-
+ 
     # Calibrated on the attack-train rows only, so the held-out row of the headline
     # table stays genuinely held out.
     threshold = mc.calibrate_threshold(scores_original, spec.membership, spec.attack_train_mask)
-
+ 
     # ------------------------------------------------------------------
     # Apply the frozen attack model + threshold to the unlearned checkpoint
     # ------------------------------------------------------------------
@@ -254,17 +268,14 @@ def main():
         X_unlearned = mc.features_for(unlearned_model, spec)
         x_unl_t = as_tensor(prepare_inputs(X_unlearned, scaler, best_bandwidth))
         scores_unlearned = vqc_scores(attack_model, x_unl_t)
-
+ 
     mc.report(spec, scores_original, scores_unlearned, threshold, "VQC attack")
-
-    # --- ROC curve for the VQC attack (original model) ---------------------
-    roc_data = roc_utils.compute_roc(scores_original, spec.membership, higher_is_member=True)
-    if args.roc_out:
-        roc_utils.plot_roc(roc_data, args.roc_out,
-                            title="VQC attack ROC (original model)", label="VQC attack")
-    if args.roc_npz_out:
-        roc_utils.save_roc_data({"vqc": roc_data}, args.roc_npz_out)
-
+ 
+    # ROC on held-out rows only: the VQC was trained on the attack-train rows
+    rows = spec.heldout_mask
+    for scores, path in ((scores_original, args.roc_npz_out), (scores_unlearned, args.roc_npz_unlearned_out)):
+        roc_utils.save_roc({"vqc": roc_utils.compute_roc(scores[rows], spec.membership[rows])}, path)
+ 
     torch.save(attack_model.state_dict(), args.artifact)
     with open(args.scaler_out, "wb") as f:
         pickle.dump({
@@ -278,7 +289,7 @@ def main():
         }, f)
     print(f"\n[save] VQC attack model -> {args.artifact}, scaler/config -> {args.scaler_out}")
     mc.save_scores(args.scores_out, spec, scores_original, scores_unlearned, threshold, "VQC")
-
-
+ 
+ 
 if __name__ == "__main__":
     main()

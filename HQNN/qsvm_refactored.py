@@ -41,8 +41,23 @@ Usage:
     python qsvm_attack.py --original orig.pth --unlearned unl.pth --n-samples 150 --n-val 150
 """
 
+"""
+NOTE from changes 9/27:
+The attack is fit on the original model's attack-train rows.
+Its ROC curve is saved for the held-out rows only, since the SVM never saw those rows.
+
+Saves ROC data for both models, on the same held-out rows with the same frozen attack model:
+    roc_curve_output/qsvm_attack_roc.npz            original model
+    roc_curve_output/qsvm_attack_roc_unlearned.npz  unlearned model
+
+Also saves attack_model_qsvm.pkl and scores_qsvm.npz to roc_curve_output/.
+Then run claude_mia/roc_utils.py (original) and claude_mia/roc_unlearned.py (unlearned) to plot.
+"""
+
 import argparse
+import os
 import pickle
+import sys
 
 import numpy as np
 import pennylane as qml
@@ -52,6 +67,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # project root: mia_common, HQNN
 import mia_common as mc
 import roc_utils
 
@@ -147,13 +163,15 @@ def main():
                              "Default 800 assumes a 1000-row pool -- raise it for a larger pool")
     parser.add_argument("--forget-class", type=int, default=mc.FORGET_CLASS)
     parser.add_argument("--data-root", type=str, default="./data")
-    parser.add_argument("--artifact", type=str, default="attack_model_qsvm.pkl")
-    parser.add_argument("--scores-out", type=str, default="scores_qsvm.npz")
-    parser.add_argument("--roc-out", type=str, default="qsvm_attack_roc.png",
-                        help="path to save the QSVM attack's ROC plot; pass '' to skip")
-    parser.add_argument("--roc-npz-out", type=str, default="qsvm_attack_roc.npz",
-                        help="path to save raw fpr/tpr/thresholds (npz); pass '' to skip")
+    parser.add_argument("--artifact", type=str, default=os.path.join(roc_utils.OUT_DIR, "attack_model_qsvm.pkl"))
+    parser.add_argument("--scores-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "scores_qsvm.npz"))
+    parser.add_argument("--roc-npz-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "qsvm_attack_roc.npz"))
+    parser.add_argument("--roc-npz-unlearned-out", type=str,
+                        default=os.path.join(roc_utils.OUT_DIR, "qsvm_attack_roc_unlearned.npz"))
     args = parser.parse_args()
+    os.makedirs(roc_utils.OUT_DIR, exist_ok=True)
+    if not os.path.exists(args.unlearned):
+        raise SystemExit(f"unlearned checkpoint not found: {args.unlearned}")
 
     # ------------------------------------------------------------------
     # Pool + features
@@ -269,13 +287,10 @@ def main():
 
     mc.report(spec, scores_original, scores_unlearned, threshold, "QSVM attack")
 
-    # --- ROC curve for the QSVM attack (original model) ---------------------
-    roc_data = roc_utils.compute_roc(scores_original, spec.membership, higher_is_member=True)
-    if args.roc_out:
-        roc_utils.plot_roc(roc_data, args.roc_out,
-                            title="QSVM attack ROC (original model)", label="QSVM attack")
-    if args.roc_npz_out:
-        roc_utils.save_roc_data({"qsvm": roc_data}, args.roc_npz_out)
+    # ROC on held-out rows only: the SVM was fit on the attack-train rows
+    rows = spec.heldout_mask
+    for scores, path in ((scores_original, args.roc_npz_out), (scores_unlearned, args.roc_npz_unlearned_out)):
+        roc_utils.save_roc({"qsvm": roc_utils.compute_roc(scores[rows], spec.membership[rows])}, path)
 
     with open(args.artifact, "wb") as f:
         pickle.dump({
