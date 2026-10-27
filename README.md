@@ -2,6 +2,7 @@
 
 Current structure:
 
+```
 qmu_inf/
 ├── README.md
 ├── .gitignore
@@ -23,10 +24,10 @@ qmu_inf/
 │   ├── HQNN_target.py
 │   └── unlearned_vs_reference.py
 │
-├── checkpoints/
-│   ├── original/               (was og_models/)
-│   │   ├── model_0324_original_5_0.1_8.pth
-│   │   └── model_0324_original_5_0.05_8.pth
-│   └── unlearned/              (was result/seed/)
+├── checkpoints
+│   ├── attack-models/
+│   ├── original/
+│   └── unlearned/
 ├── roc_curve_output/
 └── data/                       MNIST
+```
