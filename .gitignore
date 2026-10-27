@@ -1,9 +1,7 @@
-QNN/dataset/dataset_all.plk
-QNN/result
-QNN/logs
-HQNN/
-HQNN/*.pth
+.DS_Store
+*.pth
 __pycache__/
 *.pyc
 *.pkl
 *.sbatch
+*.npz
