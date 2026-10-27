@@ -54,9 +54,9 @@ Run from the project root (the folder with mia_common.py, HQNN.py and the checkp
  
 Each attack script saves its ROC data to roc_curve_output/*_roc.npz. This file loads
 them and writes:
-    roc_curve_output/original_all.png           metric + attack-model attacks
-    roc_curve_output/original_attack_model.png  VQC + QSVM + classical MLP
-    roc_curve_output/original_metric.png        loss, confidence, entropy, mod-entropy
+    roc_curve_output/original_all.pdf           metric + attack-model attacks
+    roc_curve_output/original_attack_model.pdf  VQC + QSVM + classical MLP
+    roc_curve_output/original_metric.pdf        loss, confidence, entropy, mod-entropy
 
 The metric attacks have no trained parameters, so their curves use every pool row.
 VQC, QSVM and the MLP are trained on the attack-train rows, so their curves use only the
@@ -83,7 +83,7 @@ LABELS = {
     "mod_entropy": "Mod-entropy (Song 2021)",
     "vqc": "VQC (held-out rows)",
     "qsvm": "QSVM (held-out rows)",
-    "mlp": "Classical MLP (held-out rows)",
+    # "mlp": "Classical MLP (held-out rows)",
 }
  
  
@@ -114,15 +114,17 @@ def plot_roc(roc_by_key, out_path, title, eps=1e-3):
     for key in [k for k in ALL_KEYS if k in roc_by_key]:
         d = roc_by_key[key]
         ax.plot(np.clip(d["fpr"], eps, 1), np.clip(d["tpr"], eps, 1),
-                linestyle="-", linewidth=1.5,
+                linestyle="-", linewidth=2.5,
                 color=f"C{ALL_KEYS.index(key)}", label=f"{LABELS[key]} (AUC={d['auc']:.3f})")
-    ax.plot([eps, 1], [eps, 1], ":", color="gray", linewidth=1, label="random guess")
-    ax.set(xscale="log", yscale="log", xlim=(eps, 1), ylim=(eps, 1),
-           xlabel="False Positive Rate", ylabel="True Positive Rate", title=title)
-    ax.legend(loc="lower right", fontsize=8)
+    ax.plot([eps, 1], [eps, 1], ":", color="gray", linewidth=2, label="random guess")
+    ax.set(xscale="log", yscale="log", xlim=(eps, 1), ylim=(eps, 1))
+    ax.set_xlabel("False Positive Rate", fontsize=16)
+    ax.set_ylabel("True Positive Rate", fontsize=16)
+    ax.tick_params(labelsize=12)
+    ax.legend(loc="upper left", fontsize=12)
     ax.grid(True, which="both", alpha=0.3)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, format="pdf")
     plt.close(fig)
     print(f"[save] {out_path}")
  
@@ -132,16 +134,28 @@ def plot_all(npz_names, model_name):
     roc = {}
     for name in npz_names:
         roc.update(load_roc(os.path.join(OUT_DIR, name)))
+
+    keys_present = [k for k in ALL_KEYS if k in roc]
+    width = max([len("Attack")] + [len(LABELS[k]) for k in keys_present])
+    print(f"\nAUC -- {model_name} model")
+    print(f"{'Attack':<{width}}  {'AUC':>6}")
+    print("-" * (width + 8))
+    for key in keys_present:
+        print(f"{LABELS[key]:<{width}}  {roc[key]['auc']:>6.3f}")
  
     groups = {"all": ALL_KEYS, "attack_model": ATTACK_MODEL_KEYS, "metric": METRIC_KEYS}
     for group, keys in groups.items():
         plot_roc({k: roc[k] for k in keys if k in roc},
-                 os.path.join(OUT_DIR, f"{model_name}_{group}.png"),
+                 os.path.join(OUT_DIR, f"{model_name}_{group}.pdf"),
                  f"MIA ROC: {group.replace('_', '-')} attacks, {model_name} model")
  
  
 if __name__ == "__main__":
-    plot_all(["metric_attack_roc.npz", "vqc_attack_roc.npz", "qsvm_attack_roc.npz",
-              "mlp_attack_roc.npz"], "original")
+    # plot_all(["metric_attack_roc.npz", "vqc_attack_roc.npz", "qsvm_attack_roc.npz",
+    #           "mlp_attack_roc.npz"], "original")
+    # plot_all(["metric_attack_roc_unlearned.npz", "vqc_attack_roc_unlearned.npz",
+    #           "qsvm_attack_roc_unlearned.npz", "mlp_attack_roc_unlearned.npz"], "unlearned")
+
+    plot_all(["metric_attack_roc.npz", "vqc_attack_roc.npz", "qsvm_attack_roc.npz"], "original")
     plot_all(["metric_attack_roc_unlearned.npz", "vqc_attack_roc_unlearned.npz",
-              "qsvm_attack_roc_unlearned.npz", "mlp_attack_roc_unlearned.npz"], "unlearned")
+                  "qsvm_attack_roc_unlearned.npz"], "unlearned")

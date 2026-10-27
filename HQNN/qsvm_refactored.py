@@ -1,9 +1,8 @@
 """
 Quantum-kernel SVM (QSVM) membership inference attack for evaluating HQNN unlearning.
 
-Same attack model as before -- a classical SVM on a fidelity kernel over an 8-qubit
-angle embedding -- but rebuilt on the shared evaluation pool (Part 4) so its numbers
-line up with the threshold attacks, the MLP, and the VQC attack.
+Classical SVM on a fidelity kernel over an 8-qubit angle embedding -- but rebuilt on the shared evaluation pool 
+(Part 4) so its numbers line up with the threshold attacks, the MLP, and the VQC attack.
 
 What changed from the previous version:
 

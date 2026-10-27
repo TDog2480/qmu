@@ -1,10 +1,9 @@
 QNN/dataset/dataset_all.plk
 QNN/result
 QNN/logs
-HQNN/result/
+HQNN/
 HQNN/*.pth
 __pycache__/
 *.pyc
 *.pkl
 *.sbatch
-HQNN/old_attacks/
