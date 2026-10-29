@@ -170,10 +170,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument('-seed', type=int, default=5, help="random seed")
-    parser.add_argument('-save_path', type=str, default='checkpoints/unlearned', help="save path")
+    parser.add_argument('-save_path', type=str, default=os.path.join(REPO_ROOT, 'checkpoints', 'unlearned'), help="save path")
     parser.add_argument('-time_save', type=str, default='XX', help="save path")
     parser.add_argument('-name', type=str, default='XX', help="name")
-    parser.add_argument('-target_checkpoint', type=str, default='checkpoints/original/model_0324_original_5_0.1_8.pth', help="checkpoint to unlearn from")
+    parser.add_argument('-target_checkpoint', type=str, default=os.path.join(REPO_ROOT, 'checkpoints', 'original', 'model_HQNN_original_5_0.1_8.pth'), help="checkpoint to unlearn from")
 
     parser.add_argument('-n_epochs', type=int, default=6, help="n_epochs")
     parser.add_argument('-batch_size', type=int, default=16, help="batch_size")

@@ -31,12 +31,13 @@ def plot_unlearning_curves(lists, out_path, title=None, acc_before=None):
 
     fig, (ax_l, ax_a) = plt.subplots(1, 2, figsize=(10, 4))
     if len(lists) >= 5:
-        ax_l.plot(epochs, lists[3], marker="o", label="CE on U (ascent)")
-        ax_l.plot(epochs, lists[4], marker="s", label="CE on R (descent)")
+        ax_l.plot(epochs, lists[3], marker="o",color="C1", label="CE on U (ascent)")
+        ax_l.plot(epochs, lists[4], marker="s",color="C0", label="CE on R (descent)")
+
     else:
         ax_l.plot(epochs, lists[0], marker="o", label="combined")
     ax_l.set_xlabel("Epoch")
-    ax_l.set_ylabel("Cross-entropy")
+    ax_l.set_ylabel("Cross-entropy Loss")
     ax_l.legend()
     ax_l.grid(alpha=0.3)
 
