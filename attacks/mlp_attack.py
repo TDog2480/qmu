@@ -12,8 +12,8 @@ Saves:
     roc_curve_output/attack_model_mlp.pth, attack_scaler_mlp.pkl, scores_mlp.npz
 
 Usage:
-    python MIA.py --original model_0324_original_5_0.1_8.pth \
-                  --unlearned result/seed/model_MU_gradient_U8R1.pth
+    python attacks/mlp-attack.py --original checkpoints/original/model_HQNN_original_5_0.1_8.pth \
+                  --unlearned checkpoints/unlearned/model_QMU_gradient_seed5.pth
 """
 
 import argparse
@@ -27,12 +27,14 @@ import torch.nn as nn
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # project root: mia_common, HQNN
-import roc_utils
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO_ROOT) 
 
-FULL_EPOCHS = 1000
 import attack_scoring as mc
+import roc_utils
+import plot_utils
 
+DATA_ROOT = os.path.join(REPO_ROOT, "data")
 
 class AttackMLP(nn.Module):
     def __init__(self, input_dim=13):
@@ -89,21 +91,20 @@ def train_mlp(x_fit, y_fit, n_epochs, x_val=None, y_val=None, print_every=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Classical MLP MIA attack, 4-group evaluation")
-    parser.add_argument("--original", default="model_0324_original_5_0.1_8.pth")
-    parser.add_argument("--unlearned", default="result/seed/model_MU_gradient_U8R1.pth")
-    parser.add_argument("--epochs", type=int, default=FULL_EPOCHS)
+    parser.add_argument("--original", default=os.path.join(REPO_ROOT, 'checkpoints', 'original', 'model_HQNN_original_5_0.1_8.pth'))
+    parser.add_argument("--unlearned", default=os.path.join(REPO_ROOT, 'checkpoints', 'unlearned', 'model_QMU_gradient_seed5.pth'))
+    parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--forget-class", type=int, default=mc.FORGET_CLASS)
-    parser.add_argument("--data-root", type=str, default="./data")
+    parser.add_argument("--data-root", type=str, default=DATA_ROOT)
+
     parser.add_argument("--artifact", type=str, default=os.path.join(roc_utils.OUT_DIR, "attack_model_mlp.pth"))
     parser.add_argument("--scaler-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "attack_scaler_mlp.pkl"))
     parser.add_argument("--scores-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "scores_mlp.npz"))
     parser.add_argument("--roc-npz-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "mlp_attack_roc.npz"))
-    parser.add_argument("--roc-npz-unlearned-out", type=str,
-                        default=os.path.join(roc_utils.OUT_DIR, "mlp_attack_roc_unlearned.npz"))
+    parser.add_argument("--roc-npz-unlearned-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "mlp_attack_roc_unlearned.npz"))
+    
     args = parser.parse_args()
     os.makedirs(roc_utils.OUT_DIR, exist_ok=True)
-    if not os.path.exists(args.unlearned):
-        raise SystemExit(f"unlearned checkpoint not found: {args.unlearned}")
 
     # ---- Pool + features (identical to vqc_refactored.py) ----
     ckpt = torch.load(args.original, weights_only=False)
