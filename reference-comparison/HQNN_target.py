@@ -14,7 +14,8 @@ import pickle
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-from HQNN import ConvQNN, calculate_accuracy  # noqa: E402
+from HQNN import ConvQNN, calculate_accuracy  
+from plot_utils import plot_training_curves  
 
 DATA_ROOT = os.path.join(REPO_ROOT, "data")
 
@@ -101,6 +102,10 @@ def process(args):
         lists[3].append(acc_r)
         lists[4].append(acc_u)
 
+        if args.plot_intervals > 0 and ((epoch + 1) % args.plot_intervals == 0 or epoch + 1 == args.n_epochs):
+            plot_training_curves(lists, f"{args.save_path}/curves{args.name}.png",
+                                 title=args.name.lstrip('_'))
+
         print(
             f"Epoch {epoch + 1}, Loss: {running_loss / len(trainloader):.4f}, "
             f"Train Acc: {train_acc:.2f}, "
@@ -142,6 +147,8 @@ if __name__ == "__main__":
     parser.add_argument('-n_epochs', type=int, default=10, help="n_epochs")
     parser.add_argument('-batch_size', type=int, default=8, help="batch_size")
     parser.add_argument('-learning_rate', type=float, default=0.1, help="learning_rate")
+
+    parser.add_argument('-plot_intervals', type=int, default=1, help="epochs between curve plots (0 disables)")
 
     args = parser.parse_args()
 

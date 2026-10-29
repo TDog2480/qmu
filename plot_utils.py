@@ -3,7 +3,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 def plot_training_curves(lists, out_path, title=None):
-    loss, train_acc, test_acc = lists
+    loss, train_acc, test_acc = lists[:3]
     epochs = range(1, len(loss) + 1)
 
     fig, (ax_l, ax_a) = plt.subplots(1, 2, figsize=(10, 4))
@@ -14,6 +14,9 @@ def plot_training_curves(lists, out_path, title=None):
 
     ax_a.plot(epochs, train_acc, marker="o", label="train")
     ax_a.plot(epochs, test_acc, marker="s", label="test")
+    if len(lists) >= 5:
+        ax_a.plot(epochs, lists[3], marker="^", linestyle="--", color="C2", label="test-R")
+        ax_a.plot(epochs, lists[4], marker="v", linestyle="--", color="C3", label="test-U")
     ax_a.set_xlabel("Epoch")
     ax_a.set_ylabel("Accuracy")
     ax_a.legend()
