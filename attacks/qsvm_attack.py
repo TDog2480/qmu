@@ -67,8 +67,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # project root: mia_common, HQNN
-import mia_common as mc
 import roc_utils
+import attack_scoring as mc  
 
 N_QUBITS = 8
 WIRES = range(N_QUBITS)

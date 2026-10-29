@@ -28,10 +28,10 @@ from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # project root: mia_common, HQNN
-import mia_common as mc
 import roc_utils
 
 FULL_EPOCHS = 1000
+import attack_scoring as mc
 
 
 class AttackMLP(nn.Module):

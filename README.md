@@ -9,7 +9,7 @@ qmu_inf/
 ├── .vscode/
 │
 ├── HQNN.py                     model + original training (imported by everything)
-├── mia_common.py               shared pool / split / 4-group report
+├── attack_scoring.py               shared pool / split / 4-group report (was mia_common.py)
 ├── roc_utils.py                ROC plotting
 │
 ├── unlearning/
