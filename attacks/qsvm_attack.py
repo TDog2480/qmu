@@ -1,33 +1,9 @@
 """
 Quantum-kernel SVM (QSVM) membership inference attack for evaluating HQNN unlearning.
 
-Classical SVM on a fidelity kernel over an 8-qubit angle embedding -- but rebuilt on the shared evaluation pool 
-(Part 4) so its numbers line up with the threshold attacks, the MLP, and the VQC attack.
+Classical SVM on a fidelity kernel over an 8-qubit angle embedding 
 
-What changed from the previous version:
-
-  * The member side is no longer capped at indices[0][:500] and no longer filtered
-    to exclude class 4. Members and non-members are the target's full saved train /
-    test indices (500/500 after the Part 1 retrain), class 4 present on both sides.
-    The old asymmetry meant "looks like a 4" was itself evidence of non-membership,
-    which is exactly the confound the 4-group framework removes.
-
-  * The single accuracy number on the ~88-sample label-4 mix is replaced by the
-    4-group table: member/non-4 (retain), member/class-4 (forget), non-member/non-4,
-    non-member/class-4, reported for the original and the unlearned model.
-
-  * The SVM's own 800/200 split is unchanged in spirit but is now stratified by
-    group and shared with the other attacks (mia_common.ATTACK_SPLIT_SEED). It is
-    the attack model's train/validation split and carries no membership semantics --
-    both halves contain members and non-members.
-
-  * The bandwidth x C sweep is scored by held-out AUC rather than accuracy. Accuracy
-    on a balanced pool still rewards a degenerate majority-class SVM whenever the
-    kernel concentrates; AUC does not.
-
-  * The decision threshold is calibrated once on the original model and frozen, then
-    applied unchanged to the unlearned model, so the before/after comparison is a
-    change in the model rather than a change in the attack.
+rebuilt on the shared evaluation pool 
 
 Cost: the fidelity kernel is O(N*M) circuit evaluations. Scoring 1000 rows against a
 200-row reference set costs 200k circuits *per model*, plus the sweep. The script
@@ -35,9 +11,9 @@ prints its circuit budget before starting; lower --n-samples or --n-val if that 
 too slow.
 
 Usage:
-    python qsvm_attack.py --original model_0324_original_5_0.1_8.pth \
-                          --unlearned result/seed/model_MU_gradient_U8R1.pth
-    python qsvm_attack.py --original orig.pth --unlearned unl.pth --n-samples 150 --n-val 150
+    python attacks/qsvm_attack.py --original model_HQNN_original_5_0.1_8.pth \
+                          --unlearned result/seed/model_QMU_gradient_seed5.pth
+    python attacks/qsvm_attack.py --original orig.pth --unlearned unl.pth --n-samples 150 --n-val 150
 """
 
 """
@@ -50,7 +26,7 @@ Saves ROC data for both models, on the same held-out rows with the same frozen a
     roc_curve_output/qsvm_attack_roc_unlearned.npz  unlearned model
 
 Also saves attack_model_qsvm.pkl and scores_qsvm.npz to roc_curve_output/.
-Then run claude_mia/roc_utils.py (original) and claude_mia/roc_unlearned.py (unlearned) to plot.
+Then run roc_utils.py (original) and attacks/metric_roc_unlearned_calc.py (unlearned) to plot.
 """
 
 import argparse
@@ -66,9 +42,11 @@ from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # project root: mia_common, HQNN
-import roc_utils
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO_ROOT)  # project root: attack_scoring, roc_utils, HQNN
+
 import attack_scoring as mc  
+import roc_utils  
 
 N_QUBITS = 8
 WIRES = range(N_QUBITS)
@@ -149,9 +127,9 @@ def kernel_against(x_query, x_reference):
 
 def main():
     parser = argparse.ArgumentParser(description="QSVM-based MIA attack, 4-group evaluation")
-    parser.add_argument("--original", default="model_0324_original_5_0.1_8.pth",
+    parser.add_argument("--original", default=os.path.join(REPO_ROOT, "checkpoints", "original", "model_HQNN_original_5_0.1_8.pth"),
                         help="target checkpoint the attack model is fit against")
-    parser.add_argument("--unlearned", default="result/seed/model_MU_gradient_U8R1.pth",
+    parser.add_argument("--unlearned", default=os.path.join(REPO_ROOT, "checkpoints", "unlearned", "model_QMU_gradient_seed5.pth"),
                         help="unlearned checkpoint to score with the frozen attack model")
     parser.add_argument("--n-samples", type=int, default=200,
                         help="attack-train rows used as the quantum kernel's reference set (O(N^2))")
@@ -161,7 +139,7 @@ def main():
                         help="rows used to fit the attack model; the rest are held out. "
                              "Default 800 assumes a 1000-row pool -- raise it for a larger pool")
     parser.add_argument("--forget-class", type=int, default=mc.FORGET_CLASS)
-    parser.add_argument("--data-root", type=str, default="./data")
+    parser.add_argument("--data-root", type=str, default=os.path.join(REPO_ROOT, "data"))
     parser.add_argument("--artifact", type=str, default=os.path.join(roc_utils.OUT_DIR, "attack_model_qsvm.pkl"))
     parser.add_argument("--scores-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "scores_qsvm.npz"))
     parser.add_argument("--roc-npz-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "qsvm_attack_roc.npz"))
@@ -169,8 +147,6 @@ def main():
                         default=os.path.join(roc_utils.OUT_DIR, "qsvm_attack_roc_unlearned.npz"))
     args = parser.parse_args()
     os.makedirs(roc_utils.OUT_DIR, exist_ok=True)
-    if not os.path.exists(args.unlearned):
-        raise SystemExit(f"unlearned checkpoint not found: {args.unlearned}")
 
     # ------------------------------------------------------------------
     # Pool + features
@@ -289,6 +265,8 @@ def main():
     # ROC on held-out rows only: the SVM was fit on the attack-train rows
     rows = spec.heldout_mask
     for scores, path in ((scores_original, args.roc_npz_out), (scores_unlearned, args.roc_npz_unlearned_out)):
+        if scores is None:
+            continue
         roc_utils.save_roc({"qsvm": roc_utils.compute_roc(scores[rows], spec.membership[rows])}, path)
 
     with open(args.artifact, "wb") as f:
