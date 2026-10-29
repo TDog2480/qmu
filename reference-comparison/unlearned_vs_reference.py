@@ -6,10 +6,12 @@ model's own test-set subset (checkpoint["indices"][1]) — not the raw
 
 This subset is never touched during unlearning (only train_data_U /
 train_data_R subsets of the training set receive gradient updates — see
-process_continue_training in HQNN.py), so it's safe to use here for
-evaluation.
+process_continue_training in unlearning/QMU_gradient_ascent.py), so it's 
+safe to use here for evaluation.
 
 This only compares argmax predicted class, not softmax distributions.
+For the softmax-distribution comparison on the forget set itself, see
++forget_set_distribution.py.
 
 IMPORTANT — interpretation is the OPPOSITE of comparing to the original
 model. The reference model was never trained on the forget class, so it
@@ -39,11 +41,13 @@ Reports three views:
      visible without a full 10x10 confusion matrix.
 
 Usage:
-    python prediction_agreement.py --reference path/to/ref.pth --unlearned path/to/unl.pth
+    python reference_comparison/unlearned_vs_reference.py --reference path/to/ref.pth --unlearned path/to/unl.pth
 """
 
 import argparse
+import os
 import random
+import sys
 
 import numpy as np
 import torch
@@ -51,10 +55,13 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
-from HQNN import ConvQNN
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO_ROOT)
 
+from HQNN import ConvQNN 
 
 FORGET_CLASS = 4  # MNIST digit being unlearned — class 4 throughout this codebase
+DATA_ROOT = os.path.join(REPO_ROOT, "data")
 
 
 def _get_predictions_and_labels(model, loader):
@@ -129,7 +136,7 @@ def run_prediction_agreement(reference_ckpt_path, unlearned_ckpt_path):
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,)),
     ])
-    testset = datasets.MNIST(root="./data", train=False, download=True, transform=transform)
+    testset = datasets.MNIST(root=DATA_ROOT, train=False, download=True, transform=transform)
 
     # Use the same test-set subset the reference model was evaluated/trained
     # against, rather than the raw 10,000-sample MNIST test split, so results
@@ -194,16 +201,16 @@ def run_prediction_agreement(reference_ckpt_path, unlearned_ckpt_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Compare predicted classes of reference vs. unlearned model on full test set"
+        description="Compare predicted classes of reference vs. unlearned model on the reference model's test subset"
     )
     parser.add_argument(
         "--reference",
-        default="model_0324_target_5_0.1_8.pth",
+        default=os.path.join(REPO_ROOT, "checkpoints", "reference", "model_HQNN_target_5_0.1_8.pth"),
         help="Path to reference model checkpoint (retrained without forget class)",
     )
     parser.add_argument(
         "--unlearned",
-        default="result/seed/model_MU_gradient_U8R1_seed5.pth",
+        default=os.path.join(REPO_ROOT, "checkpoints", "unlearned", "model_QMU_gradient_seed5.pth"),
         help="Path to unlearned model checkpoint",
     )
     args = parser.parse_args()
