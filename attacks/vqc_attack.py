@@ -63,21 +63,22 @@ from pennylane.templates.embeddings import AngleEmbedding
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
  
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # project root: mia_common, HQNN
-import attack_scoring as mc
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO_ROOT)  # project root: attack_scoring, roc_utils, HQNN
+
+import attack_scoring
 import roc_utils
  
 N_QUBITS = 4
 N_LAYERS = 2
  
-# Embedding-bandwidth candidates for pi * tanh(bandwidth * z), same grid as
-# qsvm_attack.py for comparability. Picked via a short proxy training run.
+# Embedding-bandwidth candidates for pi * tanh(bandwidth * z), same grid as qsvm_attack.py for comparability. 
+# Picked via a short proxy training run.
 BANDWIDTHS = [0.1, 0.3, 1.0]
 SWEEP_EPOCHS = 100
 FULL_EPOCHS = 1000
  
-# Near-identity initialization std, to avoid the barren plateau that a full
-# uniform[-pi, pi] init tends to land on for an entangling ansatz like this one.
+# Near-identity initialization std, to avoid barren plateau for an entangling ansatz like this one.
 INIT_STD = 0.01
  
 dev = qml.device("default.qubit", wires=N_QUBITS)
@@ -180,21 +181,26 @@ def train_vqc(x_fit, y_fit, n_epochs, x_val=None, y_val=None, print_every=None):
  
 def main():
     parser = argparse.ArgumentParser(description="VQC-based MIA attack, 4-group evaluation")
-    parser.add_argument("--original", default="model_0324_original_5_0.1_8.pth",
+    parser.add_argument("--original", default=os.path.join(REPO_ROOT, "checkpoints", "original", "model_HQNN_original_5_0.1_8.pth"),
                         help="target checkpoint the attack model is fit against")
-    parser.add_argument("--unlearned", default="result/seed/model_MU_gradient_U8R1.pth",
+    parser.add_argument("--unlearned", default=os.path.join(REPO_ROOT, "checkpoints", "unlearned", "model_QMU_gradient_seed5.pth"),
                         help="unlearned checkpoint to score with the frozen attack model")
+    
     parser.add_argument("--epochs", type=int, default=FULL_EPOCHS)
-    parser.add_argument("--forget-class", type=int, default=mc.FORGET_CLASS)
-    parser.add_argument("--data-root", type=str, default="./data")
-    parser.add_argument("--artifact", type=str, default=os.path.join("roc_curve_output", "attack_model_vqc.pth"))
-    parser.add_argument("--scaler-out", type=str, default=os.path.join("roc_curve_output", "attack_scaler_vqc.pkl"))
-    parser.add_argument("--scores-out", type=str, default=os.path.join("roc_curve_output", "scores_vqc.npz"))
-    parser.add_argument("--roc-npz-out", type=str, default=os.path.join("roc_curve_output", "vqc_attack_roc.npz"))
-    parser.add_argument("--roc-npz-unlearned-out", type=str,
-                        default=os.path.join("roc_curve_output", "vqc_attack_roc_unlearned.npz"))
+    parser.add_argument("--forget-class", type=int, default=attack_scoring.FORGET_CLASS)
+    parser.add_argument("--data-root", type=str, default=attack_scoring.DATA_ROOT)
+
+    parser.add_argument("--artifact", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "attack_model_vqc.pth"))
+    parser.add_argument("--scaler-out", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "attack_scaler_vqc.pkl"))
+
+    parser.add_argument("--scores-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "scores_vqc.npz"))
+    parser.add_argument("--roc-npz-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "vqc_attack_roc.npz"))
+    parser.add_argument("--roc-npz-unlearned-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "vqc_attack_roc_unlearned.npz"))
     args = parser.parse_args()
-    os.makedirs("roc_curve_output", exist_ok=True)
+
+    os.makedirs(roc_utils.OUT_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(args.artifact), exist_ok=True)
+    os.makedirs(os.path.dirname(args.scaler_out), exist_ok=True)
     if not os.path.exists(args.unlearned):
         raise SystemExit(f"unlearned checkpoint not found: {args.unlearned}")
  
@@ -202,14 +208,14 @@ def main():
     # Pool + features
     # ------------------------------------------------------------------
     ckpt = torch.load(args.original, weights_only=False)
-    mc.set_seed(int(getattr(ckpt["args"], "seed", 0)))
-    model = mc.build_model(ckpt)
+    attack_scoring.set_seed(int(getattr(ckpt["args"], "seed", 0)))
+    model = attack_scoring.build_model(ckpt)
     print(f"[setup] target: {args.original}  (HQNN.ConvQNN, amplitude embedding)")
  
-    spec = mc.build_pool_spec(ckpt, data_root=args.data_root, forget_class=args.forget_class)
-    mc.describe_pool(spec)
+    spec = attack_scoring.build_pool_spec(ckpt, data_root=args.data_root, forget_class=args.forget_class)
+    attack_scoring.describe_pool(spec)
  
-    X_original = mc.features_for(model, spec)
+    X_original = attack_scoring.features_for(model, spec)
     fit_rows = np.flatnonzero(spec.attack_train_mask)
     val_rows = np.flatnonzero(spec.heldout_mask) 
 
@@ -252,23 +258,23 @@ def main():
  
     # Calibrated on the attack-train rows only, so the held-out row of the headline
     # table stays genuinely held out.
-    threshold = mc.calibrate_threshold(scores_original, spec.membership, spec.attack_train_mask)
+    threshold = attack_scoring.calibrate_threshold(scores_original, spec.membership, spec.attack_train_mask)
  
     # ------------------------------------------------------------------
     # Apply the frozen attack model + threshold to the unlearned checkpoint
     # ------------------------------------------------------------------
     scores_unlearned = None
     try:
-        _, unlearned_model = mc.load_weights_into(args.unlearned, ckpt)
+        _, unlearned_model = attack_scoring.load_weights_into(args.unlearned, ckpt)
     except FileNotFoundError:
         print(f"\n[warn] unlearned checkpoint not found: {args.unlearned} -- reporting the original model only")
     else:
         print(f"[setup] unlearned: {args.unlearned}")
-        X_unlearned = mc.features_for(unlearned_model, spec)
+        X_unlearned = attack_scoring.features_for(unlearned_model, spec)
         x_unl_t = as_tensor(prepare_inputs(X_unlearned, scaler, best_bandwidth))
         scores_unlearned = vqc_scores(attack_model, x_unl_t)
  
-    mc.report(spec, scores_original, scores_unlearned, threshold, "VQC attack")
+    attack_scoring.report(spec, scores_original, scores_unlearned, threshold, "VQC attack")
  
     # ROC on held-out rows only: the VQC was trained on the attack-train rows
     rows = spec.heldout_mask
@@ -283,11 +289,11 @@ def main():
             "threshold": threshold,
             "heldout_auc": final_val_auc,
             "target_checkpoint": args.original,
-            "attack_split_seed": mc.ATTACK_SPLIT_SEED,
+            "attack_split_seed": attack_scoring.ATTACK_SPLIT_SEED,
             "forget_class": args.forget_class,
         }, f)
     print(f"\n[save] VQC attack model -> {args.artifact}, scaler/config -> {args.scaler_out}")
-    mc.save_scores(args.scores_out, spec, scores_original, scores_unlearned, threshold, "VQC")
+    attack_scoring.save_scores(args.scores_out, spec, scores_original, scores_unlearned, threshold, "VQC")
  
  
 if __name__ == "__main__":
