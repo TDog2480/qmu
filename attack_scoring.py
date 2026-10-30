@@ -1,23 +1,10 @@
 """
-Shared member/non-member pool, feature extraction, and 4-group reporting for the
-MIA family (threshold attacks, MLP, VQC, QSVM).
+Shared member/non-member pool, feature extraction, and 4-group reporting for the model based MIAs: MLP, VQC, QSVM.
 
-Part 4 of the evaluation plan requires all four attack families to be scored on
-the *same* balanced pool with the *same* 4-group breakdown, so their numbers are
-directly comparable. Everything that defines the pool, the groups, or the
-attack-model split lives here, so the attack scripts cannot silently drift apart
-the way shadow_attack_train/eval's build_attack_features() could.
+Two splits in data:
+  - membership split: member (target's train indices) vs non-member (target's test indices).
 
-Two splits are in play and must not be conflated:
-
-  * membership split -- member (target's train indices) vs non-member (target's
-    test indices). This is the *label* the attack is trying to predict, and it
-    is what the 4-group table is built from.
-
-  * attack-model split -- 800 rows to fit the attack model / calibrate a
-    threshold, 200 rows held out. Both halves contain members and non-members
-    and both contain class-4 rows. This is ordinary supervised-learning hygiene
-    for the attack model and carries no membership semantics.
+  - attack-model split: 800 rows to fit the attack model / calibrate a threshold, 200 rows held out. 
 
 The 4 groups (Part 3):
 
@@ -27,17 +14,16 @@ The 4 groups (Part 3):
     non-member, non-4            non-member   non-member            baseline FPR
     non-member, class-4          non-member   non-member            class-matched FPR
 
-Success criterion for forgetting is the forget row's unlearned member-rate
-approaching the *class-matched* non-member rate, not the global FPR. Compare the
-two non-member rows first: if they diverge, class 4 is atypical for this model
-and the class-matched number is the honest target.
+Success criterion for forgetting is the forget row's unlearned member-rate approaching the *class-matched* non-member rate, not the global FPR. 
 
-The retain row measures utility, not privacy. It staying member-like only means
-unlearning did not break the model.
+Compare the two non-member rows first: if they diverge, class 4 is atypical for this model and the class-matched number is the honest target.
+
+The retain row measures utility, not privacy. staying member-like means unlearning did not break the model.
 """
 
 from __future__ import annotations
 
+import os
 import random
 from dataclasses import dataclass
 from typing import List, Optional, Sequence
@@ -50,12 +36,16 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
-FORGET_CLASS = 4
-N_ATTACK_TRAIN = 800
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_ROOT = os.path.join(REPO_ROOT, "data")
 
-# Fixed and shared across every attack script so the 800/200 split is byte-identical
-# between the MLP, VQC and QSVM runs. Deliberately independent of the target
-# checkpoint's own seed -- the split must not move when the target does.
+FORGET_CLASS = 4
+N_ATTACK_TRAIN = None
+ATTACK_TRAIN_FRAC = 0.8
+
+# Fixed and shared across every attack script so the fit/held-out split is byte-identical
+# between the MLP, VQC and QSVM runs. 
+# Deliberately independent of the target checkpoint's own seed
 ATTACK_SPLIT_SEED = 12345
 
 FEATURE_NAMES = [f"prob_{i}" for i in range(10)] + ["max_prob", "correct", "loss"]
@@ -82,7 +72,7 @@ def set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def load_mnist(data_root: str = "./data"):
+def load_mnist(data_root: str = DATA_ROOT):
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     trainset = datasets.MNIST(root=data_root, train=True, download=True, transform=transform)
     testset = datasets.MNIST(root=data_root, train=False, download=True, transform=transform)
@@ -137,7 +127,7 @@ class PoolSpec:
     labels: np.ndarray            # (N,) true MNIST class
     membership: np.ndarray        # (N,) 1 = member, 0 = non-member
     group: np.ndarray             # (N,) index into GROUPS
-    attack_train_mask: np.ndarray  # (N,) bool: row is in the attack model's 800
+    attack_train_mask: np.ndarray  # (N,) bool: row is in the attack model's fit set
     forget_class: int
     trainset: object
     testset: object
@@ -151,8 +141,8 @@ class PoolSpec:
         return ~self.attack_train_mask
 
 
-def build_pool_spec(ckpt, data_root: str = "./data", forget_class: int = FORGET_CLASS,
-                    n_attack_train: int = N_ATTACK_TRAIN,
+def build_pool_spec(ckpt, data_root: str = DATA_ROOT, forget_class: int = FORGET_CLASS,
+                    n_attack_train: Optional[int] = N_ATTACK_TRAIN,
                     split_seed: int = ATTACK_SPLIT_SEED) -> PoolSpec:
     """
     Build the full pool from the target checkpoint's own saved indices.
@@ -189,6 +179,8 @@ def build_pool_spec(ckpt, data_root: str = "./data", forget_class: int = FORGET_
               "misleading, read the AUC and the per-group rates instead.")
 
     n_total = len(labels)
+    if n_attack_train is None:
+        n_attack_train = int(round(ATTACK_SPLIT_SEED * n_total))
     n_tr = int(min(n_attack_train, n_total - 1))
     # Stratify on the 4 groups, not just membership, so the ~50 class-4 members
     # are split proportionally instead of landing mostly on one side by luck.
@@ -224,7 +216,7 @@ def describe_pool(spec: PoolSpec) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Feature extraction -- the same 13-dim vector MIA.py uses
+# Feature extraction -- the same 13-dim vector attacks/mlp_attack.py uses
 # ---------------------------------------------------------------------------
 
 def _features_and_labels(model, dataset, indices: Sequence[int], batch_size: int):
@@ -372,7 +364,7 @@ def print_headline(spec: PoolSpec, scores_original: np.ndarray,
         print(f"{tag:<22}{membership_auc(scores_original, spec, mask):>8.3f}"
               f"{balanced_accuracy(scores_original, spec, threshold, mask):>10.3f}")
     print("Held-out is the honest generalization number; the full-pool row includes the "
-          "800 rows the attack model was fit on.")
+          f"{int(spec.attack_train_mask.sum())} rows the attack model was fit on.")
     if scores_unlearned is not None:
         print(f"\nSame attack applied to the unlearned model (full pool): "
               f"AUC {membership_auc(scores_unlearned, spec, None):.3f}, "
@@ -384,7 +376,7 @@ def report(spec: PoolSpec, scores_original: np.ndarray, scores_unlearned: Option
     """Full Part 3 / Part 4 report for one attack family."""
     print_headline(spec, scores_original, scores_unlearned, threshold, attack_name)
     print_group_table(spec, scores_original, scores_unlearned, threshold, mask=None,
-                      title=f"{attack_name} -- member rate by group (full 1000-row pool)")
+                      title=f"{attack_name} -- member rate by group (full {spec.n}-row pool)")
     print_group_table(spec, scores_original, scores_unlearned, threshold, mask=spec.heldout_mask,
                       title=f"{attack_name} -- member rate by group (held-out rows only; "
                             "small n, wide error bars)")
