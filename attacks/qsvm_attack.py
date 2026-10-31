@@ -130,7 +130,7 @@ def main():
     parser.add_argument("--n-samples", type=int, default=200,
                         help="attack-train rows used as the quantum kernel's reference set (O(N^2))")
     parser.add_argument("--n-val", type=int, default=200,
-                        help="held-out rows used to pick bandwidth and C")
+                        help="rows from attack-train selection slice used to pick bandwidth and C")
     parser.add_argument("--n-attack-train", type=int, default=mc.N_ATTACK_TRAIN,
                         help="rows used to fit the attack model; the rest are held out. "
                              "Default: 80%% of the pool")
@@ -162,26 +162,25 @@ def main():
     X_original = mc.features_for(model, spec)
 
     fit_rows = np.flatnonzero(spec.attack_train_mask)
-    heldout_rows = np.flatnonzero(spec.heldout_mask)
+    # heldout_rows = np.flatnonzero(spec.heldout_mask)
+    inner_rows, sel_pool = mc.selection_split(spec)
 
     # Scaler is fit on the attack-train rows only, then frozen -- the held-out rows
     # and the unlearned model's features must not influence the standardization.
     scaler = StandardScaler().fit(X_original[fit_rows])
 
     # Both subsamples are stratified by group. Slicing rows in index order would
-    # take members only: the pool is built members-first, so heldout_rows[:n] is a
+    # take members only: the pool is built members-first, so rows[:n] is a
     # single-class set, which makes AUC undefined and lets a majority-class SVM
     # score 100% accuracy.
     rng = np.random.default_rng(mc.ATTACK_SPLIT_SEED)
-    sub = fit_rows[stratified_subsample(spec.group[fit_rows], min(args.n_samples, len(fit_rows)), rng)]
-    val_rows = heldout_rows[
-        stratified_subsample(spec.group[heldout_rows], min(args.n_val, len(heldout_rows)), rng)
-    ]
+    sub = inner_rows[stratified_subsample(spec.group[inner_rows], min(args.n_samples, len(inner_rows)), rng)]
+    val_rows = sel_pool[stratified_subsample(spec.group[sel_pool], min(args.n_val, len(sel_pool)), rng)]
 
     y_sub = spec.membership[sub]
     y_val = spec.membership[val_rows]
 
-    for tag, y in (("reference", y_sub), ("validation", y_val)):
+    for tag, y in (("reference", y_sub), ("selection", y_val)):
         if len(np.unique(y)) < 2:
             raise RuntimeError(
                 f"{tag} set contains only one membership class ({int(y.sum())} members / "
@@ -189,19 +188,18 @@ def main():
                 "nothing to separate. Raise --n-samples/--n-val."
             )
     print(f"[setup] reference set: {int(y_sub.sum())} members / {int((1 - y_sub).sum())} non-members;  "
-          f"validation set: {int(y_val.sum())} members / {int((1 - y_val).sum())} non-members")
+          f"selection set: {int(y_val.sum())} members / {int((1 - y_val).sum())} non-members")
 
     budget = len(BANDWIDTHS) * (len(sub) * (len(sub) - 1) // 2 + len(val_rows) * len(sub))
     budget += 2 * spec.n * len(sub)
     print(f"\n[setup] quantum-kernel budget: ~{budget:,} circuit evaluations "
-          f"(reference set {len(sub)}, val {len(val_rows)}, scoring {spec.n} rows x 2 models)")
+          f"(reference set {len(sub)}, selection {len(val_rows)}, scoring {spec.n} rows x 2 models)")
 
     # ------------------------------------------------------------------
     # Sweep bandwidth (expensive: a fresh kernel per candidate) and C (cheap:
-    # a refit on an already-computed Gram matrix), scored by held-out AUC
     # ------------------------------------------------------------------
     best = {"auc": -1.0}
-    print(f"\nSweeping bandwidth {BANDWIDTHS} x C {C_GRID} on {len(sub)} fit / {len(val_rows)} held-out rows ...")
+    print(f"\nSweeping bandwidth {BANDWIDTHS} x C {C_GRID} on {len(sub)} reference / {len(val_rows)} selection rows (both from the attack-train split)")
     for bandwidth in BANDWIDTHS:
         x_sub_q = prepare_inputs(X_original[sub], scaler, bandwidth)
         x_val_q = prepare_inputs(X_original[val_rows], scaler, bandwidth)
@@ -230,7 +228,7 @@ def main():
         raise RuntimeError("no configuration produced a usable held-out AUC -- nothing to select from")
 
     print(f"Best config: bandwidth={best['bandwidth']}, C={best['C']}, "
-          f"held-out AUC={best['auc']:.3f} (acc={best['acc'] * 100:.2f}%)")
+          f"selection AUC={best['auc']:.3f} (acc={best['acc'] * 100:.2f}%)")
 
     # ------------------------------------------------------------------
     # Score the original model's whole pool; calibrate and freeze the threshold
@@ -282,7 +280,8 @@ def main():
             "threshold": threshold,
             "score_space": "svm_decision_function",
             "heldout_auc": heldout_auc,
-            "selection_val_auc": best["auc"],   
+            "selection_auc": best["auc"],
+            "selection_frac": mc.SELECTION_FRAC,
             "bandwidth": best["bandwidth"],
             "C": best["C"],
             "n_qubits": N_QUBITS,

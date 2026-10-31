@@ -32,12 +32,19 @@ What changed from the previous version:
   * The decision threshold is calibrated once on the original model and frozen, then
     applied unchanged to the unlearned model.
 
-Bandwidth is selected on the held-out rows, so the held-out AUC reported at the end
-is mildly optimistic (one hyperparameter's worth). Nothing else touches it.
+Bandwidth is selected on selection slice of attack training rows, so the held-out AUC reported at the end
+is not selection-biased.
 
 Usage:
-    python vqc_refactored.py --original model_0324_original_5_0.1_8.pth \
-                         --unlearned result/seed/model_MU_gradient_U8R1.pth
+    python vqc_refactored.py --original checkpoints/original/model_HQNN_original_5_0.1_8.pth \
+                         --unlearned checkpoints/unlearned/model_QMU_gradient_seed5.pth
+
+Saves:
+    roc_curve_output/vqc_attack_roc.npz            original model
+    roc_curve_output/vqc_attack_roc_unlearned.npz  unlearned model
+
+
+
 """
 
 """
@@ -60,7 +67,7 @@ import pennylane as qml
 import torch
 import torch.nn as nn
 from pennylane.templates.embeddings import AngleEmbedding
-from sklearn.metrics import roc_auc_score
+# from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
  
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -169,13 +176,13 @@ def train_vqc(x_fit, y_fit, n_epochs, x_val=None, y_val=None, print_every=None):
             fit_acc = float(((outputs.detach().numpy().reshape(-1) > 0.5).astype(int) == y_fit_np).mean())
             msg = f"Epoch {epoch + 1}, Loss: {loss.item():.4f}, Fit Acc: {fit_acc * 100:.2f}%"
             if x_val is not None:
-                val_auc = roc_auc_score(y_val, vqc_scores(model, x_val))
+                val_auc = roc_utils.compute_roc(vqc_scores(model, x_val), y_val)["auc"]
                 msg += f", Held-out AUC: {val_auc:.3f}"
             print(msg)
  
     val_auc = float("nan")
     if x_val is not None and len(np.unique(y_val)) > 1:
-        val_auc = float(roc_auc_score(y_val, vqc_scores(model, x_val)))
+        val_auc = float(roc_utils.compute_roc(vqc_scores(model, x_val), y_val)["auc"])
     return model, val_auc
  
  
@@ -223,22 +230,26 @@ def main():
     scaler = StandardScaler().fit(X_original[fit_rows])
     y_fit = torch.tensor(spec.membership[fit_rows], dtype=torch.float32).unsqueeze(1)
     y_val = spec.membership[val_rows]
+
+    inner_rows, sel_rows = attack_scoring.selection_split(spec)
+    y_inner = torch.tensor(spec.membership[inner_rows], dtype=torch.float32).unsqueeze(1)
+    y_sel = spec.membership[sel_rows]
  
     # ------------------------------------------------------------------
-    # Sweep embedding bandwidth with a short proxy budget, scored by held-out AUC
+    # Sweep embedding bandwidth with a short proxy budget, scored by selection slice
     # ------------------------------------------------------------------
     best_auc, best_bandwidth = -1.0, None
     print(f"\nSweeping bandwidth {BANDWIDTHS} with {SWEEP_EPOCHS}-epoch proxy runs on "
-          f"{len(fit_rows)} fit / {len(val_rows)} held-out rows ...")
+          f"{len(inner_rows)} inner-fit / {len(sel_rows)} selection rows (both from the attack-train split) ...")
     for bandwidth in BANDWIDTHS:
-        x_fit_t = as_tensor(prepare_inputs(X_original[fit_rows], scaler, bandwidth))
-        x_val_t = as_tensor(prepare_inputs(X_original[val_rows], scaler, bandwidth))
-        _, val_auc = train_vqc(x_fit_t, y_fit, SWEEP_EPOCHS, x_val_t, y_val)
-        print(f"  bandwidth={bandwidth:.2f}  held-out AUC={val_auc:.3f}")
-        if val_auc > best_auc:
-            best_auc, best_bandwidth = val_auc, bandwidth
+        x_inner_t = as_tensor(prepare_inputs(X_original[inner_rows], scaler, bandwidth))
+        x_sel_t = as_tensor(prepare_inputs(X_original[sel_rows], scaler, bandwidth))
+        _, sel_auc = train_vqc(x_inner_t, y_inner, SWEEP_EPOCHS, x_sel_t, y_sel)
+        print(f"  bandwidth={bandwidth:.2f}  selection AUC={sel_auc:.3f}")
+        if np.isfinite(sel_auc) and sel_auc > best_auc:
+            best_auc, best_bandwidth = sel_auc, bandwidth
  
-    print(f"Best bandwidth: {best_bandwidth} (proxy held-out AUC={best_auc:.3f})")
+    print(f"Best bandwidth: {best_bandwidth} (proxy selection AUC={best_auc:.3f})")
  
     # ------------------------------------------------------------------
     # Full training run at the selected bandwidth
@@ -286,6 +297,8 @@ def main():
         pickle.dump({
             "scaler": scaler,
             "bandwidth": best_bandwidth,
+            "selection_auc": best_auc,
+            "selection_frac": attack_scoring.SELECTION_FRAC,
             "threshold": threshold,
             "heldout_auc": final_val_auc,
             "target_checkpoint": args.original,

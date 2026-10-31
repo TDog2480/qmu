@@ -48,10 +48,13 @@ ATTACK_TRAIN_FRAC = 0.8
 # Deliberately independent of the target checkpoint's own seed
 ATTACK_SPLIT_SEED = 12345
 
+# ensure held-out rows do not affect bandwidth and C hyperparameter selection for quantum attacks
+SELECTION_FRAC = 0.2
+
 FEATURE_NAMES = [f"prob_{i}" for i in range(10)] + ["max_prob", "correct", "loss"]
 FEATURE_DIM = len(FEATURE_NAMES)
 
-# (key, human-readable label, is_member, is_forget_class) -- order defines group ids.
+# (key, label, is_member, is_forget_class) -- order defines group ids.
 GROUPS = (
     ("member_retain", "member, non-4 (retain)", True, False),
     ("member_forget", "member, class-4 (forget)", True, True),
@@ -200,6 +203,18 @@ def build_pool_spec(ckpt, data_root: str = DATA_ROOT, forget_class: int = FORGET
         testset=testset,
     )
 
+def selection_split(spec: PoolSpec, frac: float = SELECTION_FRAC,
+                    seed: int = ATTACK_SPLIT_SEED):
+    """Split the attack-train rows into (inner_rows, sel_rows), stratified by group.
+
+    Hyperparameter candidates are fit on inner_rows and scored on sel_rows; the
+    held-out rows stay untouched until final evaluation. Deterministic, so VQC and
+    QSVM select on the same rows.
+    """
+    fit_rows = np.flatnonzero(spec.attack_train_mask)
+    inner, sel = train_test_split(fit_rows, test_size=frac, random_state=seed,
+                                  stratify=spec.group[fit_rows])
+    return np.sort(inner), np.sort(sel)
 
 def describe_pool(spec: PoolSpec) -> None:
     print(f"\nPool: {spec.n} rows  ({int(spec.membership.sum())} members / "
