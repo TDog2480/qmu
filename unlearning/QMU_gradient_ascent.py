@@ -175,7 +175,7 @@ if __name__ == "__main__":
     parser.add_argument('-name', type=str, default='XX', help="name")
     parser.add_argument('-target_checkpoint', type=str, default=os.path.join(REPO_ROOT, 'checkpoints', 'original', 'model_HQNN_original_5_0.1_8.pth'), help="checkpoint to unlearn from")
 
-    parser.add_argument('-n_epochs', type=int, default=6, help="n_epochs")
+    parser.add_argument('-n_epochs', type=int, default=9, help="n_epochs")
     parser.add_argument('-batch_size', type=int, default=16, help="batch_size")
     parser.add_argument('-learning_rate', type=float, default=0.01, help="learning_rate")
 
