@@ -269,7 +269,7 @@ def run_metric_attacks(args):
                               records_by_group["nonmember_c4"], key, higher),
         }
 
-    if args.silence:
+    if not args.silence:
         summary = {}
         auc_summary = {}
         for key, (higher, label) in ATTACKS.items():
