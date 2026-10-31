@@ -1,15 +1,15 @@
 """
 Classical MLP membership inference attack for evaluating HQNN unlearning.
 
-Same pipeline as vqc_refactored.py / qsvm_refactored.py (shared mia_common pool,
-attack-train / held-out split, 4-group report, frozen threshold) -- only the attack
+Same pipeline as vqc_attack.py / qsvm_attack.py ; only the attack
 model differs: a classical MLP on the same 13-dim feature vector. This isolates the
 attack model as the only variable when comparing against the quantum attacks.
 
 Saves:
     roc_curve_output/mlp_attack_roc.npz            original model (held-out rows)
     roc_curve_output/mlp_attack_roc_unlearned.npz  unlearned model (held-out rows)
-    roc_curve_output/attack_model_mlp.pth, attack_scaler_mlp.pkl, scores_mlp.npz
+    roc_curve_output/scores_mlp.npz
+    checkpoints/attack-models/attack_model_mlp.pth, attack_config_mlp.pkl
 
 Usage:
     python attacks/mlp-attack.py --original checkpoints/original/model_HQNN_original_5_0.1_8.pth \
@@ -24,15 +24,13 @@ import sys
 import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT) 
 
-import attack_scoring as mc
+import attack_scoring
 import roc_utils
-import plot_utils
 
 DATA_ROOT = os.path.join(REPO_ROOT, "data")
 
@@ -80,12 +78,13 @@ def train_mlp(x_fit, y_fit, n_epochs, x_val=None, y_val=None, print_every=None):
             fit_acc = float(((outputs.detach().numpy().reshape(-1) > 0.5).astype(int) == y_fit_np).mean())
             msg = f"Epoch {epoch + 1}, Loss: {loss.item():.4f}, Fit Acc: {fit_acc * 100:.2f}%"
             if x_val is not None:
-                msg += f", Held-out AUC: {roc_auc_score(y_val, mlp_scores(model, x_val)):.3f}"
+                val_auc = roc_utils.compute_roc(mlp_scores(model, x_val), y_val)["auc"]
+                msg += f", Held-out AUC: {val_auc:.3f}"
             print(msg)
 
     val_auc = float("nan")
     if x_val is not None and len(np.unique(y_val)) > 1:
-        val_auc = float(roc_auc_score(y_val, mlp_scores(model, x_val)))
+        val_auc = float(roc_utils.compute_roc(mlp_scores(model, x_val), y_val)["auc"])
     return model, val_auc
 
 
@@ -94,28 +93,31 @@ def main():
     parser.add_argument("--original", default=os.path.join(REPO_ROOT, 'checkpoints', 'original', 'model_HQNN_original_5_0.1_8.pth'))
     parser.add_argument("--unlearned", default=os.path.join(REPO_ROOT, 'checkpoints', 'unlearned', 'model_QMU_gradient_seed5.pth'))
     parser.add_argument("--epochs", type=int, default=1000)
-    parser.add_argument("--forget-class", type=int, default=mc.FORGET_CLASS)
+    parser.add_argument("--forget-class", type=int, default=attack_scoring.FORGET_CLASS)
     parser.add_argument("--data-root", type=str, default=DATA_ROOT)
 
-    parser.add_argument("--artifact", type=str, default=os.path.join(roc_utils.OUT_DIR, "attack_model_mlp.pth"))
-    parser.add_argument("--scaler-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "attack_scaler_mlp.pkl"))
-    parser.add_argument("--scores-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "scores_mlp.npz"))
+    parser.add_argument("--artifact", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "attack_model_mlp.pth"))
+    parser.add_argument("--config-out", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "attack_scaler_mlp.pkl"))
+    parser.add_argument("--scores-out", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "scores_mlp.npz"))
+
     parser.add_argument("--roc-npz-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "mlp_attack_roc.npz"))
     parser.add_argument("--roc-npz-unlearned-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "mlp_attack_roc_unlearned.npz"))
     
     args = parser.parse_args()
     os.makedirs(roc_utils.OUT_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(args.artifact), exist_ok=True)
+    os.makedirs(os.path.dirname(args.config_out), exist_ok=True)
 
-    # ---- Pool + features (identical to vqc_refactored.py) ----
+    # ---- Pool + features ----
     ckpt = torch.load(args.original, weights_only=False)
-    mc.set_seed(int(getattr(ckpt["args"], "seed", 0)))
-    model = mc.build_model(ckpt)
+    attack_scoring.set_seed(int(getattr(ckpt["args"], "seed", 0)))
+    model = attack_scoring.build_model(ckpt)
     print(f"[setup] target: {args.original}")
 
-    spec = mc.build_pool_spec(ckpt, data_root=args.data_root, forget_class=args.forget_class)
-    mc.describe_pool(spec)
+    spec = attack_scoring.build_pool_spec(ckpt, data_root=args.data_root, forget_class=args.forget_class)
+    attack_scoring.describe_pool(spec)
 
-    X_original = mc.features_for(model, spec)
+    X_original = attack_scoring.features_for(model, spec)
     fit_rows = np.flatnonzero(spec.attack_train_mask)
     val_rows = np.flatnonzero(spec.heldout_mask)
 
@@ -134,39 +136,45 @@ def main():
 
     # ---- Score whole pool; calibrate threshold on attack-train rows and freeze ----
     scores_original = mlp_scores(attack_model, as_tensor(scaler.transform(X_original)))
-    threshold = mc.calibrate_threshold(scores_original, spec.membership, spec.attack_train_mask)
+    threshold = attack_scoring.calibrate_threshold(scores_original, spec.membership, spec.attack_train_mask)
 
     # ---- Frozen attack model + threshold on the unlearned checkpoint ----
     scores_unlearned = None
     try:
-        _, unlearned_model = mc.load_weights_into(args.unlearned, ckpt)
+        _, unlearned_model = attack_scoring.load_weights_into(args.unlearned, ckpt)
     except FileNotFoundError:
         print(f"\n[warn] unlearned checkpoint not found: {args.unlearned} -- reporting the original model only")
     else:
         print(f"[setup] unlearned: {args.unlearned}")
-        X_unlearned = mc.features_for(unlearned_model, spec)
+        X_unlearned = attack_scoring.features_for(unlearned_model, spec)
         scores_unlearned = mlp_scores(attack_model, as_tensor(scaler.transform(X_unlearned)))
 
-    mc.report(spec, scores_original, scores_unlearned, threshold, "MLP attack")
+    attack_scoring.report(spec, scores_original, scores_unlearned, threshold, "MLP attack")
 
     # ROC on held-out rows only: the MLP was trained on the attack-train rows
     rows = spec.heldout_mask
     for scores, path in ((scores_original, args.roc_npz_out), (scores_unlearned, args.roc_npz_unlearned_out)):
-        if scores is not None:
-            roc_utils.save_roc({"mlp": roc_utils.compute_roc(scores[rows], spec.membership[rows])}, path)
+        if scores is None:
+            continue
+        roc_utils.save_roc({"mlp": roc_utils.compute_roc(scores[rows], spec.membership[rows])}, path)
+
 
     torch.save(attack_model.state_dict(), args.artifact)
-    with open(args.scaler_out, "wb") as f:
+    with open(args.config_out, "wb") as f:
         pickle.dump({
+            "attack": "mlp",
             "scaler": scaler,
             "threshold": threshold,
+            "score_space": "logit",
             "heldout_auc": final_val_auc,
+            "input_dim": x_fit_t.shape[1],
+            "epochs": args.epochs,
             "target_checkpoint": args.original,
-            "attack_split_seed": mc.ATTACK_SPLIT_SEED,
+            "attack_split_seed": attack_scoring.ATTACK_SPLIT_SEED,
             "forget_class": args.forget_class,
         }, f)
-    print(f"\n[save] MLP attack model -> {args.artifact}, scaler/config -> {args.scaler_out}")
-    mc.save_scores(args.scores_out, spec, scores_original, scores_unlearned, threshold, "MLP")
+    print(f"\n[save] MLP attack model -> {args.artifact}, scaler/config -> {args.config_out}")
+    attack_scoring.save_scores(args.scores_out, spec, scores_original, scores_unlearned, threshold, "MLP")
 
 
 if __name__ == "__main__":
