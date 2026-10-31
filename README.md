@@ -13,11 +13,10 @@ qmu_inf/
 ├── roc_utils.py                ROC plotting
 │
 ├── unlearning/
-│   └── MU_gradient.py
+│   └── QMU_gradient_ascent.py
 ├── attacks/
 │   ├── metric_attack.py
-│   ├── metric_roc_unlearned_calc.py
-│   ├── mlp_attack.py           (was MIA.py)
+│   ├── mlp_attack.py          
 │   ├── vqc_attack.py
 │   └── qsvm_attack.py
 ├── reference_comparison/       
@@ -27,7 +26,18 @@ qmu_inf/
 ├── checkpoints
 │   ├── attack-models/
 │   ├── original/
+│   ├── reference/
 │   └── unlearned/
 ├── roc_curve_output/
 └── data/                       MNIST
 ```
+
+Run HQNN.py to train model
+
+Run unlearning/QMU_gradient_ascent.py to run unlearning loop
+
+Run each attack under attacks/ 
+
+Run roc_utils.py after running attacks to see ROC curves
+
+Run HQNN_target.py to train reference model and then unlearned_vs_reference.py to see per sample breakdown
