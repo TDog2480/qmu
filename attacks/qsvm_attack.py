@@ -11,9 +11,18 @@ prints its circuit budget before starting; lower --n-samples or --n-val if that 
 too slow.
 
 Usage:
-    python attacks/qsvm_attack.py --original model_HQNN_original_5_0.1_8.pth \
-                          --unlearned result/seed/model_QMU_gradient_seed5.pth
+    python attacks/qsvm_attack.py --original checkpoints/original/model_HQNN_original_5_0.1_8.pth \
+                          --unlearned checkpoints/unlearned/model_QMU_gradient_seed5.pth
     python attacks/qsvm_attack.py --original orig.pth --unlearned unl.pth --n-samples 150 --n-val 150
+
+Saves:
+    roc_curve_output/qsvm_attack_roc.npz            original model
+    roc_curve_output/qsvm_attack_roc_unlearned.npz  unlearned model
+    roc_curve_output/scores_qsvm.npz
+
+    checkpoints/attack-models/attack_model_qsvm.pkl
+    checkpoints/attack-models/attack_config_qsvm.pkl
+
 """
 
 """
@@ -137,11 +146,12 @@ def main():
                         help="held-out rows used to pick bandwidth and C")
     parser.add_argument("--n-attack-train", type=int, default=mc.N_ATTACK_TRAIN,
                         help="rows used to fit the attack model; the rest are held out. "
-                             "Default 800 assumes a 1000-row pool -- raise it for a larger pool")
+                             "Default: 80%% of the pool")
     parser.add_argument("--forget-class", type=int, default=mc.FORGET_CLASS)
     parser.add_argument("--data-root", type=str, default=os.path.join(REPO_ROOT, "data"))
     parser.add_argument("--artifact", type=str, default=os.path.join(roc_utils.OUT_DIR, "attack_model_qsvm.pkl"))
-    parser.add_argument("--scores-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "scores_qsvm.npz"))
+
+    parser.add_argument("--scores-out", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "scores_qsvm.npz"))
     parser.add_argument("--roc-npz-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "qsvm_attack_roc.npz"))
     parser.add_argument("--roc-npz-unlearned-out", type=str,
                         default=os.path.join(roc_utils.OUT_DIR, "qsvm_attack_roc_unlearned.npz"))
