@@ -18,8 +18,8 @@ Usage:
 Saves:
     roc_curve_output/qsvm_attack_roc.npz            original model
     roc_curve_output/qsvm_attack_roc_unlearned.npz  unlearned model
-    roc_curve_output/scores_qsvm.npz
-
+    
+    checkpoints/attack-models/scores_qsvm.npz
     checkpoints/attack-models/attack_model_qsvm.pkl
     checkpoints/attack-models/attack_config_qsvm.pkl
 
@@ -149,14 +149,16 @@ def main():
                              "Default: 80%% of the pool")
     parser.add_argument("--forget-class", type=int, default=mc.FORGET_CLASS)
     parser.add_argument("--data-root", type=str, default=os.path.join(REPO_ROOT, "data"))
-    parser.add_argument("--artifact", type=str, default=os.path.join(roc_utils.OUT_DIR, "attack_model_qsvm.pkl"))
 
+    parser.add_argument("--artifact", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "attack_model_qsvm.pkl"))
+    parser.add_argument("--config-out", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "attack_config_qsvm.pkl"))
     parser.add_argument("--scores-out", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "scores_qsvm.npz"))
     parser.add_argument("--roc-npz-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "qsvm_attack_roc.npz"))
     parser.add_argument("--roc-npz-unlearned-out", type=str,
                         default=os.path.join(roc_utils.OUT_DIR, "qsvm_attack_roc_unlearned.npz"))
     args = parser.parse_args()
     os.makedirs(roc_utils.OUT_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(args.artifact), exist_ok=True)
 
     # ------------------------------------------------------------------
     # Pool + features
@@ -250,9 +252,8 @@ def main():
     K_all = kernel_against(x_all_q, best["reference"])
     scores_original = best["svc"].decision_function(K_all)
 
-    # Calibrated on the attack-train rows only. Calibrating on all 1000 would fold
-    # the held-out rows into threshold selection and make the held-out row of the
-    # headline table no longer held out.
+    # Calibrated on the attack-train rows only. Calibrating on all 1000 would fold the held-out rows into threshold selection 
+    # and make the held-out row of the headline table no longer held out.
     threshold = mc.calibrate_threshold(scores_original, spec.membership, spec.attack_train_mask)
 
     # ------------------------------------------------------------------
@@ -279,20 +280,30 @@ def main():
             continue
         roc_utils.save_roc({"qsvm": roc_utils.compute_roc(scores[rows], spec.membership[rows])}, path)
 
+    heldout_auc = float(roc_auc_score(spec.membership[rows], scores_original[rows]))
     with open(args.artifact, "wb") as f:
         pickle.dump({
             "svc": best["svc"],
             "scaler": scaler,
             "reference_inputs": best["reference"],
+            "reference_rows": sub,
+        }, f)
+    with open(args.config_out, "wb") as f:
+        pickle.dump({ 
+            "attack": "qsvm",
+            "scaler": scaler,
+            "threshold": threshold,
+            "score_space": "svm_decision_function",
+            "heldout_auc": heldout_auc,
+            "selection_val_auc": best["auc"],   
             "bandwidth": best["bandwidth"],
             "C": best["C"],
-            "threshold": threshold,
-            "heldout_auc": best["auc"],
+            "n_qubits": N_QUBITS,
             "target_checkpoint": args.original,
             "attack_split_seed": mc.ATTACK_SPLIT_SEED,
             "forget_class": args.forget_class,
         }, f)
-    print(f"\n[save] QSVM attack model -> {args.artifact}")
+    print(f"\n[save] QSVM attack model -> {args.artifact}, config -> {args.config_out}")
     mc.save_scores(args.scores_out, spec, scores_original, scores_unlearned, threshold, "QSVM")
 
 
