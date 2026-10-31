@@ -180,13 +180,11 @@ def build_pool_spec(ckpt, data_root: str = DATA_ROOT, forget_class: int = FORGET
 
     n_total = len(labels)
     if n_attack_train is None:
-        n_attack_train = int(round(ATTACK_SPLIT_SEED * n_total))
+        n_attack_train = int(round(ATTACK_TRAIN_FRAC * n_total))
     n_tr = int(min(n_attack_train, n_total - 1))
     # Stratify on the 4 groups, not just membership, so the ~50 class-4 members
     # are split proportionally instead of landing mostly on one side by luck.
-    tr_rows, _ = train_test_split(
-        np.arange(n_total), train_size=n_tr, stratify=group, random_state=split_seed
-    )
+    tr_rows, _ = train_test_split(np.arange(n_total), train_size=n_tr, random_state=split_seed, stratify=group)
     attack_train_mask = np.zeros(n_total, dtype=bool)
     attack_train_mask[tr_rows] = True
 
