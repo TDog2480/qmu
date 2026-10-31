@@ -25,19 +25,6 @@ Saves:
 
 """
 
-"""
-NOTE from changes 9/27:
-The attack is fit on the original model's attack-train rows.
-Its ROC curve is saved for the held-out rows only, since the SVM never saw those rows.
-
-Saves ROC data for both models, on the same held-out rows with the same frozen attack model:
-    roc_curve_output/qsvm_attack_roc.npz            original model
-    roc_curve_output/qsvm_attack_roc_unlearned.npz  unlearned model
-
-Also saves attack_model_qsvm.pkl and scores_qsvm.npz to roc_curve_output/.
-Then run roc_utils.py (original) and attacks/metric_roc_unlearned_calc.py (unlearned) to plot.
-"""
-
 import argparse
 import os
 import pickle
