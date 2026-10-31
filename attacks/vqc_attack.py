@@ -192,8 +192,8 @@ def main():
 
     parser.add_argument("--artifact", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "attack_model_vqc.pth"))
     parser.add_argument("--scaler-out", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "attack_scaler_vqc.pkl"))
+    parser.add_argument("--scores-out", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "scores_vqc.npz"))
 
-    parser.add_argument("--scores-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "scores_vqc.npz"))
     parser.add_argument("--roc-npz-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "vqc_attack_roc.npz"))
     parser.add_argument("--roc-npz-unlearned-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "vqc_attack_roc_unlearned.npz"))
     args = parser.parse_args()
