@@ -161,6 +161,6 @@ if __name__ == "__main__":
     if not os.path.exists(args.save_path):
         os.makedirs(args.save_path)
 
-    args.name = f'_HQNN_target_{args.n_layers}_{args.learning_rate}_{args.batch_size}'
+    args.name = f'_HQNN_target_{args.n_layers}_{args.learning_rate}_{args.batch_size}_seed{args.seed}'
 
     process(args)
