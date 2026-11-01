@@ -48,7 +48,7 @@ def process_continue_training(args):
     test_indices = checkpoint['indices'][1]
 
     # Split R/U
-    def split_indices(dataset, indices, label=4):
+    def split_indices(dataset, indices, label=args.forget_class):
         r_idx, u_idx = [], []
         for idx in indices:
             _, lbl = dataset[idx]
@@ -178,6 +178,8 @@ if __name__ == "__main__":
     parser.add_argument('-n_epochs', type=int, default=9, help="n_epochs")
     parser.add_argument('-batch_size', type=int, default=16, help="batch_size")
     parser.add_argument('-learning_rate', type=float, default=0.01, help="learning_rate")
+
+    parser.add_argument('-forget_class', type=int, default=4, help="class to be forgotten in unlearning")
 
     parser.add_argument('-plot_intervals', type=int, default=1, help="epochs between curve plots (0 disables)")
 
