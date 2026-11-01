@@ -5,10 +5,7 @@ Classical SVM on a fidelity kernel over an 8-qubit angle embedding
 
 rebuilt on the shared evaluation pool 
 
-Cost: the fidelity kernel is O(N*M) circuit evaluations. Scoring 1000 rows against a
-200-row reference set costs 200k circuits *per model*, plus the sweep. The script
-prints its circuit budget before starting; lower --n-samples or --n-val if that is
-too slow.
+Cost: the fidelity kernel is O(N*M) circuit evaluations
 
 Usage:
     python attacks/qsvm_attack.py --original checkpoints/original/model_HQNN_original_5_0.1_8.pth \

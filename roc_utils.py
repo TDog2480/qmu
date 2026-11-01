@@ -1,29 +1,20 @@
-
 """
-Shared ROC / AUC utilities for every membership-inference attack in this repo.
-Every attack reduces to one real-valued score per example plus a 0/1 membership
-label; nothing outside this module should call roc_curve / roc_auc_score directly.
+Shared ROC/AUC utilities for the membership-inference attacks.
 
-Attack scripts compute and persist curve
-    roc = roc_utils.compute_roc(scores, labels, higher_is_member)            # fpr, tpr, thresholds, auc
-    auc = roc_utils.auc_score(member_vals, nonmember_vals, higher_is_member)
-    res = roc_utils.evaluate(member_scores, nonmember_scores)                # + balanced_acc, tpr_at_fpr
-    roc_utils.save_attack_roc("vqc_attack", {"vqc": res}, model="original") # or model="unlearned"
+Contents:
+  - compute_roc / evaluate: ROC curve + AUC (+ balanced-acc, TPR@FPR).
+  - save_roc / save_attack_roc: persist ROC data to .npz under roc_curve_output/.
+  - load_roc / load_model_rocs: reload saved ROC files for plotting.
+  - plot_roc / plot_group / main: log-log ROC plots to roc_curve_output/*.pdf.
 
-save_attack_roc writes OUT_DIR/<source>_roc.npz (original) or <source>_roc_unlearned.npz.
-Plotting discovers every such file in OUT_DIR; no file list to maintain:
+Usage (CLI):
+  python roc_utils.py [--all | --metric-only | --quantum-only | --model-based-only]
+                      [--model original | unlearned | both]
 
-    python roc_utils.py [--all | --metric-only | --quantum-only | --model-based-only]
-                        [--model original|unlearned|both]
-
-    --metric-only       loss, max_conf, entropy, mod_entropy
-    --quantum-only      vqc, qsvm
-    --model-based-only  vqc, qsvm, mlp (trained attack models; held-out rows only)
-    --all               every key above (default)
-
-Output: OUT_DIR/<model>_<group>.pdf, plus an AUC table on stdout.
-    
+At the CLI it reads every *_roc.npz / *_roc_unlearned.npz already in
+roc_curve_output/ and writes a plot per model+group to roc_curve_output/.
 """
+
 
 import argparse
 import os

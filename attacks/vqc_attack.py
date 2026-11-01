@@ -1,60 +1,22 @@
 """
 VQC-based membership inference attack for evaluating HQNN unlearning.
 
-Same attack model as before -- a 4-qubit variational circuit with data re-uploading,
-trained with BCE on the 13-dim MIA feature vector -- but rebuilt on the shared
-evaluation pool (Part 4) so its numbers line up with the threshold attacks, the MLP,
-and the QSVM attack.
-
-What changed from the previous version:
-
-  * The member side is no longer capped at indices[0][:500] and no longer filtered
-    to exclude class 4. Members and non-members are the target's full saved train /
-    test indices (500/500 after the Part 1 retrain), class 4 present on both sides.
-
-  * The single accuracy number on the ~88-sample label-4 mix is gone, and with it
-    the misleading per-epoch "Label4 Acc" -- that set overlapped the training split
-    almost entirely, so it read as a generalization metric while mostly reporting
-    training fit. Progress is now tracked as training accuracy on the fit rows and
-    AUC on the held-out rows, which are actually different things.
-
-  * Results are the 4-group table: member/non-4 (retain), member/class-4 (forget),
-    non-member/non-4, non-member/class-4, for the original and the unlearned model.
-
-  * The 800/200 attack-model split is stratified by group and shared with the other
-    attacks (mia_common.ATTACK_SPLIT_SEED). It is the attack model's own
-    train/validation split and carries no membership semantics -- both halves
-    contain members and non-members.
-
-  * The bandwidth sweep is scored by held-out AUC rather than accuracy, so a
-    collapsed circuit that predicts one class cannot win the sweep.
-
-  * The decision threshold is calibrated once on the original model and frozen, then
-    applied unchanged to the unlearned model.
+4-qubit variational circuit with data re-uploading, trained with BCE on the 13-dim MIA feature vector -- 
+rebuilt on the shared evaluation pool from attack_scoring
 
 Bandwidth is selected on selection slice of attack training rows, so the held-out AUC reported at the end
 is not selection-biased.
 
 Usage:
-    python vqc_refactored.py --original checkpoints/original/model_HQNN_original_5_0.1_8.pth \
-                         --unlearned checkpoints/unlearned/model_QMU_gradient_seed5.pth
+    python attacks/vqc_attack.py 
 
 Saves:
-    roc_curve_output/vqc_attack_roc.npz            original model
-    roc_curve_output/vqc_attack_roc_unlearned.npz  unlearned model
+    roc_curve_output/vqc_attack_roc.npz            
+    roc_curve_output/vqc_attack_roc_unlearned.npz  
+    
+    checkpoints/attack-models/attack_scaler_vqc.pkl
+    checkpoints/attack-models/attack_model_vqc.pth
 
-
-
-"""
-
-"""
-NOTE from changes 9/27:
- 
-Saves ROC data for both models, on the same held-out rows with the same frozen attack model:
-    roc_curve_output/vqc_attack_roc.npz            original model
-    roc_curve_output/vqc_attack_roc_unlearned.npz  unlearned model
-Also saves attack_model_vqc.pth, attack_scaler_vqc.pkl and scores_vqc.npz to roc_curve_output/.
-Then run roc_utils.py (original) and roc_unlearned_plot.py (unlearned) to plot.
 """
 
 import argparse
@@ -152,11 +114,6 @@ def vqc_scores(model, x_tensor):
  
 def train_vqc(x_fit, y_fit, n_epochs, x_val=None, y_val=None, print_every=None):
     """Train a fresh AttackVQC on the attack-train rows.
- 
-    Progress reporting keeps two things apart that the old loop merged: training
-    accuracy on the rows being fit (free -- reuses the forward pass already computed
-    for the loss) and AUC on the held-out rows, which is the only number that says
-    anything about generalization.
     """
     model = AttackVQC()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)

@@ -10,25 +10,13 @@ single scalar computed from the target model's softmax output:
   Modified-entropy     (Song & Mittal, 2021)  — lower mod-entropy -> member
 
 Thresholds are calibrated on the original model with ALL training samples
-as members and ALL test samples as non-members — the forget class appears on
-both sides, so the threshold cannot use "is this a 4" as a proxy for
-membership.  
-
-The frozen thresholds are then applied to four disjoint groups, for both the 
-original and the unlearned model:
-
-    member,     non-4   (retain)  — should stay classified "member" (utility)
-    member,     class-4 (forget)  — should drop to the class-4 non-member rate
-    non-member, non-4             — global false-positive baseline
-    non-member, class-4           — class-matched target for the forget row
-
-Successful unlearning: the unlearned model's forget-set membership rate
-approaches the class-4 *non-member* rate — not 50%, and not the global FPR,
-since class 4 may be intrinsically easier or harder than the average digit.
+as members and ALL test samples as non-members.
 
 Usage:
     python attacks/metric_attack.py
     python attacks/metric_attack.py --original path/to/orig.pth --unlearned path/to/unl.pth
+
+Optionally saves to file specified by --write-to-file
 """
 
 import argparse
