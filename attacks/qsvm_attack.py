@@ -34,14 +34,13 @@ import numpy as np
 import pennylane as qml
 import torch
 from pennylane.templates.embeddings import AngleEmbedding
-from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)  # project root: attack_scoring, roc_utils, HQNN
 
-import attack_scoring as mc  
+import attack_scoring  
 import roc_utils  
 
 N_QUBITS = 8
@@ -131,10 +130,7 @@ def main():
                         help="attack-train rows used as the quantum kernel's reference set (O(N^2))")
     parser.add_argument("--n-val", type=int, default=200,
                         help="rows from attack-train selection slice used to pick bandwidth and C")
-    parser.add_argument("--n-attack-train", type=int, default=mc.N_ATTACK_TRAIN,
-                        help="rows used to fit the attack model; the rest are held out. "
-                             "Default: 80%% of the pool")
-    parser.add_argument("--forget-class", type=int, default=mc.FORGET_CLASS)
+    parser.add_argument("--forget-class", type=int, default=attack_scoring.FORGET_CLASS)
     parser.add_argument("--data-root", type=str, default=os.path.join(REPO_ROOT, "data"))
 
     parser.add_argument("--artifact", type=str, default=os.path.join(REPO_ROOT, "checkpoints", "attack-models", "attack_model_qsvm.pkl"))
@@ -151,19 +147,19 @@ def main():
     # Pool + features
     # ------------------------------------------------------------------
     ckpt = torch.load(args.original, weights_only=False)
-    mc.set_seed(int(getattr(ckpt["args"], "seed", 0)))
-    model = mc.build_model(ckpt)
+    attack_scoring.set_seed(int(getattr(ckpt["args"], "seed", 0)))
+    model = attack_scoring.build_model(ckpt)
     print(f"[setup] target: {args.original}  (HQNN.ConvQNN, amplitude embedding)")
 
-    spec = mc.build_pool_spec(ckpt, data_root=args.data_root, forget_class=args.forget_class,
-                              n_attack_train=args.n_attack_train)
-    mc.describe_pool(spec)
+    spec = attack_scoring.build_pool_spec(ckpt, data_root=args.data_root, forget_class=args.forget_class,
+                              n_attack_train=attack_scoring.N_ATTACK_TRAIN)
+    attack_scoring.describe_pool(spec)
 
-    X_original = mc.features_for(model, spec)
+    X_original = attack_scoring.features_for(model, spec)
 
     fit_rows = np.flatnonzero(spec.attack_train_mask)
     # heldout_rows = np.flatnonzero(spec.heldout_mask)
-    inner_rows, sel_pool = mc.selection_split(spec)
+    inner_rows, sel_pool = attack_scoring.selection_split(spec)
 
     # Scaler is fit on the attack-train rows only, then frozen -- the held-out rows
     # and the unlearned model's features must not influence the standardization.
@@ -173,7 +169,7 @@ def main():
     # take members only: the pool is built members-first, so rows[:n] is a
     # single-class set, which makes AUC undefined and lets a majority-class SVM
     # score 100% accuracy.
-    rng = np.random.default_rng(mc.ATTACK_SPLIT_SEED)
+    rng = np.random.default_rng(attack_scoring.ATTACK_SPLIT_SEED)
     sub = inner_rows[stratified_subsample(spec.group[inner_rows], min(args.n_samples, len(inner_rows)), rng)]
     val_rows = sel_pool[stratified_subsample(spec.group[sel_pool], min(args.n_val, len(sel_pool)), rng)]
 
@@ -211,7 +207,7 @@ def main():
         for C in C_GRID:
             svc = SVC(kernel="precomputed", C=C).fit(K_train, y_sub)
             val_scores = svc.decision_function(K_val)
-            val_auc = float(roc_auc_score(y_val, val_scores))
+            val_auc = float(roc_utils.compute_roc(val_scores, y_val)["auc"])
             val_pred = svc.predict(K_val)
             val_acc = float((val_pred == y_val).mean())
             degenerate = " [predicts one class]" if len(np.unique(val_pred)) < 2 else ""
@@ -239,24 +235,24 @@ def main():
 
     # Calibrated on the attack-train rows only. Calibrating on all 1000 would fold the held-out rows into threshold selection 
     # and make the held-out row of the headline table no longer held out.
-    threshold = mc.calibrate_threshold(scores_original, spec.membership, spec.attack_train_mask)
+    threshold = attack_scoring.calibrate_threshold(scores_original, spec.membership, spec.attack_train_mask)
 
     # ------------------------------------------------------------------
     # Apply the frozen attack model + threshold to the unlearned checkpoint
     # ------------------------------------------------------------------
     scores_unlearned = None
     try:
-        _, unlearned_model = mc.load_weights_into(args.unlearned, ckpt)
+        _, unlearned_model = attack_scoring.load_weights_into(args.unlearned, ckpt)
     except FileNotFoundError:
         print(f"\n[warn] unlearned checkpoint not found: {args.unlearned} -- reporting the original model only")
     else:
         print(f"[setup] unlearned: {args.unlearned}")
-        X_unlearned = mc.features_for(unlearned_model, spec)
+        X_unlearned = attack_scoring.features_for(unlearned_model, spec)
         x_unl_q = prepare_inputs(X_unlearned, scaler, best["bandwidth"])
         K_unl = kernel_against(x_unl_q, best["reference"])
         scores_unlearned = best["svc"].decision_function(K_unl)
 
-    mc.report(spec, scores_original, scores_unlearned, threshold, "QSVM attack")
+    attack_scoring.report(spec, scores_original, scores_unlearned, threshold, "QSVM attack")
 
     # ROC on held-out rows only: the SVM was fit on the attack-train rows
     rows = spec.heldout_mask
@@ -265,7 +261,7 @@ def main():
             continue
         roc_utils.save_roc({"qsvm": roc_utils.compute_roc(scores[rows], spec.membership[rows])}, path)
 
-    heldout_auc = float(roc_auc_score(spec.membership[rows], scores_original[rows]))
+    heldout_auc = attack_scoring.membership_auc(scores_original, spec, rows)
     with open(args.artifact, "wb") as f:
         pickle.dump({
             "svc": best["svc"],
@@ -281,16 +277,16 @@ def main():
             "score_space": "svm_decision_function",
             "heldout_auc": heldout_auc,
             "selection_auc": best["auc"],
-            "selection_frac": mc.SELECTION_FRAC,
+            "selection_frac": attack_scoring.SELECTION_FRAC,
             "bandwidth": best["bandwidth"],
             "C": best["C"],
             "n_qubits": N_QUBITS,
             "target_checkpoint": args.original,
-            "attack_split_seed": mc.ATTACK_SPLIT_SEED,
+            "attack_split_seed": attack_scoring.ATTACK_SPLIT_SEED,
             "forget_class": args.forget_class,
         }, f)
     print(f"\n[save] QSVM attack model -> {args.artifact}, config -> {args.config_out}")
-    mc.save_scores(args.scores_out, spec, scores_original, scores_unlearned, threshold, "QSVM")
+    attack_scoring.save_scores(args.scores_out, spec, scores_original, scores_unlearned, threshold, "QSVM")
 
 
 if __name__ == "__main__":

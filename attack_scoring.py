@@ -31,10 +31,11 @@ from typing import List, Optional, Sequence
 import numpy as np
 import torch
 import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
+
+import roc_utils
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA_ROOT = os.path.join(REPO_ROOT, "data")
@@ -277,7 +278,8 @@ def calibrate_threshold(scores: np.ndarray, membership: np.ndarray,
     the frozen threshold is really for.
     """
     sel = np.ones(len(scores), dtype=bool) if mask is None else mask
-    fpr, tpr, thresholds = roc_curve(membership[sel], scores[sel])
+    roc = roc_utils.compute_roc(scores[sel], membership[sel])
+    fpr, tpr, thresholds = roc["fpr"], roc["tpr"], roc["thresholds"]
     best = int(np.argmax((tpr + (1 - fpr)) / 2))
     thr = float(thresholds[best])
     if not np.isfinite(thr):  # roc_curve's first threshold is +inf
@@ -292,7 +294,7 @@ def membership_auc(scores: np.ndarray, spec: PoolSpec,
     y = spec.membership[sel]
     if len(np.unique(y)) < 2:
         return float("nan")
-    return float(roc_auc_score(y, scores[sel]))
+    return float(roc_utils.compute_roc(scores[sel], y)["auc"])
 
 
 def balanced_accuracy(scores: np.ndarray, spec: PoolSpec, threshold: float,

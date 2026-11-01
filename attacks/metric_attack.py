@@ -39,7 +39,7 @@ import sys
 import numpy as np
 import torch
 import torch.nn.functional as F
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import accuracy_score
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
@@ -125,8 +125,7 @@ def calibrate_threshold(member_records, nonmember_records, key, higher_is_member
         if acc > best_acc:
             best_acc, best_thr = acc, float(thr)
 
-    score = all_vals if higher_is_member else -all_vals
-    auc = roc_auc_score(all_labels, score)
+    auc = roc_utils.compute_roc(all_vals, all_labels, higher_is_member)["auc"]
     return best_thr, best_acc, auc
 
 
@@ -136,7 +135,7 @@ def group_auc(member_records, nonmember_records, key, higher_is_member):
     nm_vals = np.array([r[key] for r in nonmember_records])
     vals   = np.concatenate([m_vals, nm_vals])
     labels = np.array([1] * len(m_vals) + [0] * len(nm_vals))
-    return float(roc_auc_score(labels, vals if higher_is_member else -vals))
+    return float(roc_utils.evaluate(m_vals, nm_vals, higher_is_member)["auc"])
 
 
 def membership_rate(records, key, threshold, higher_is_member):

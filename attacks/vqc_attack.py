@@ -67,7 +67,6 @@ import pennylane as qml
 import torch
 import torch.nn as nn
 from pennylane.templates.embeddings import AngleEmbedding
-# from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
  
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
