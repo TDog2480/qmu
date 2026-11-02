@@ -10,6 +10,7 @@ from pennylane.templates.embeddings import AmplitudeEmbedding
 import random
 import pickle
 from plot_utils import plot_training_curves
+from models import build_model, MODEL_TYPES
 
 qubit_num = n_qubits = 8
 # Define quantum device
@@ -109,7 +110,7 @@ def process(args):
     testloader = DataLoader(test_subset, batch_size=args.batch_size, shuffle=False)
 
     # Initialize model
-    model = ConvQNN(args)
+    model = build_model(args)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)
     # Train model
@@ -185,6 +186,8 @@ if __name__ == "__main__":
     parser.add_argument('-time_save', type=str, default='XX', help="save path")
     parser.add_argument('-name', type=str, default='XX', help="name")
 
+    parser.add_argument('-model_type', type=str, default='hqnn', choices=MODEL_TYPES, help="hqnn, or mlp for the classical baseline")
+
     parser.add_argument('-n_qubit', type=int, default=8, help="n_qubit")
     parser.add_argument('-n_layers', type=int, default=5, help="n_layers")
 
@@ -209,7 +212,10 @@ if __name__ == "__main__":
     if not os.path.exists(args.save_path):
         os.makedirs(args.save_path)
 
-    args.name = f'_HQNN_original_{args.n_layers}_{args.learning_rate}_{args.batch_size}'
+    if args.model_type == 'hqnn':
+        args.name = f'_HQNN_original_{args.n_layers}_{args.learning_rate}_{args.batch_size}'
+    else:
+        args.name = f'_MLP_original_{args.learning_rate}_{args.batch_size}'
 
     process(args)
 

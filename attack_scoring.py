@@ -81,17 +81,17 @@ def load_mnist(data_root: str = DATA_ROOT):
 
 def build_model(ckpt):
     """
-    Instantiate HQNN.ConvQNN and load this checkpoint's weights.
+    Instantiate the model named by the checkpoint's args.model_type (HQNN.ConvQNN
+    or models.ConvMLP) and load this checkpoint's weights.
 
-    Every attack in this evaluation targets the base HQNN.py model (amplitude
-    embedding, 8 qubits), so the architecture is fixed rather than sniffed from
+    The architecture comes from the checkpoint args rather than being sniffed from
     the state_dict. A checkpoint from a different encoding will fail loudly here
     on a shape mismatch, which is the wanted behaviour -- silently loading the
-    wrong ConvQNN would produce a full 4-group table of meaningless numbers.
+    wrong model would produce a full 4-group table of meaningless numbers.
     """
-    from HQNN import ConvQNN
+    from models import build_model as _build_model
 
-    model = ConvQNN(ckpt["args"])
+    model = _build_model(ckpt["args"])
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
     return model

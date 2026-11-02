@@ -102,6 +102,17 @@ def save_roc(roc_by_key, path):
                       if field in ROC_FIELDS})
     print(f"[save] ROC data -> {path}")
 
+def tag_path(path, tag):
+    """Move an output path into a <tag> subfolder next to it, so a tagged run (e.g. the MLP
+    baseline) never overwrites the untagged HQNN outputs. No tag leaves the path unchanged.
+    Subfolders are skipped by load_model_rocs, which only scans OUT_DIR itself."""
+    if not tag:
+        return path
+    tagged = os.path.join(os.path.dirname(path), tag, os.path.basename(path))
+    os.makedirs(os.path.dirname(tagged), exist_ok=True)
+    return tagged
+
+
 def roc_path(source, model="original"):
     """OUT_DIR/<source>_roc.npz or OUT_DIR/<source>_roc_unlearned.npz."""
     return os.path.join(OUT_DIR, f"{source}{MODEL_SUFFIX[model]}")

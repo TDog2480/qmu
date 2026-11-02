@@ -15,15 +15,27 @@ import pickle
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-from HQNN import ConvQNN, calculate_accuracy
+from HQNN import calculate_accuracy
+from models import build_model
 from plot_utils import plot_unlearning_curves
 
 def process_continue_training(args):
 
     # Load state_dict
     checkpoint = torch.load(args.target_checkpoint, weights_only=False)
-    model = ConvQNN(checkpoint['args'])
-    args.name = f"QMU_{checkpoint['args'].n_layers}_{args.learning_rate}_{args.batch_size}"
+    model = build_model(checkpoint['args'])
+    model_type = getattr(checkpoint['args'], 'model_type', 'hqnn')
+
+    # Outputs from non-HQNN models go in a subfolder so they never overwrite the HQNN checkpoints
+    tag = args.tag or (model_type if model_type != 'hqnn' else None)
+    if tag:
+        args.save_path = os.path.join(args.save_path, tag)
+        os.makedirs(args.save_path, exist_ok=True)
+
+    if model_type == 'hqnn':
+        args.name = f"QMU_{checkpoint['args'].n_layers}_{args.learning_rate}_{args.batch_size}"
+    else:
+        args.name = f"QMU_MLP_{args.learning_rate}_{args.batch_size}"
 
     model.load_state_dict(checkpoint["model_state_dict"])
 
@@ -175,7 +187,9 @@ if __name__ == "__main__":
     parser.add_argument('-name', type=str, default='XX', help="name")
     parser.add_argument('-target_checkpoint', type=str, default=os.path.join(REPO_ROOT, 'checkpoints', 'original', 'model_HQNN_original_5_0.1_8.pth'), help="checkpoint to unlearn from")
 
-    parser.add_argument('-n_epochs', type=int, default=6, help="n_epochs")
+    parser.add_argument('-tag', type=str, default=None, help="save into a <tag> subfolder of save_path; defaults to the model type for non-HQNN checkpoints")
+
+    parser.add_argument('-n_epochs', type=int, default=9, help="n_epochs")
     parser.add_argument('-batch_size', type=int, default=16, help="batch_size")
     parser.add_argument('-learning_rate', type=float, default=0.01, help="learning_rate")
 

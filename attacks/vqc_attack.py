@@ -196,7 +196,10 @@ def main():
 
     parser.add_argument("--roc-npz-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "vqc_attack_roc.npz"))
     parser.add_argument("--roc-npz-unlearned-out", type=str, default=os.path.join(roc_utils.OUT_DIR, "vqc_attack_roc_unlearned.npz"))
+    parser.add_argument("--tag", type=str, default=None, help="write every output into a <tag> subfolder (e.g. mlp for the MLP baseline) instead of overwriting the HQNN outputs")
     args = parser.parse_args()
+    for name in ("artifact", "scaler_out", "scores_out", "roc_npz_out", "roc_npz_unlearned_out"):
+        setattr(args, name, roc_utils.tag_path(getattr(args, name), args.tag))
 
     os.makedirs(roc_utils.OUT_DIR, exist_ok=True)
     os.makedirs(os.path.dirname(args.artifact), exist_ok=True)

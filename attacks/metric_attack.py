@@ -46,7 +46,7 @@ from torchvision import datasets, transforms
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-from HQNN import ConvQNN
+from models import build_model
 import roc_utils
 
 FORGET_CLASS = 4  # MNIST digit being unlearned — class 4 throughout this codebase
@@ -198,7 +198,7 @@ def _build_group_loaders(orig_ckpt):
 def run_metric_attacks(args):
     # --- Load original model ---
     orig_ckpt = torch.load(args.original, weights_only=False)
-    model = ConvQNN(orig_ckpt["args"])
+    model = build_model(orig_ckpt["args"])
     model.load_state_dict(orig_ckpt["model_state_dict"])
 
     seed = orig_ckpt["args"].seed
@@ -244,7 +244,7 @@ def run_metric_attacks(args):
     labels = [1] * len(members_orig) + [0] * len(nonmembers_orig)
     roc = {key: roc_utils.compute_roc([r[key] for r in members_orig + nonmembers_orig], labels, higher)
            for key, (higher, _) in ATTACKS.items()}
-    roc_utils.save_roc(roc, os.path.join(roc_utils.OUT_DIR, "metric_attack_roc.npz"))
+    roc_utils.save_roc(roc, roc_utils.tag_path(os.path.join(roc_utils.OUT_DIR, "metric_attack_roc.npz"), getattr(args, "tag", None)))
 
     # --- 4-group membership rates, per attack ------------------------------
     #   member,     non-4    -> stay high = utility preserved
@@ -428,5 +428,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--write-to-file", default=None, help="Path to file to write metric attacks results to")
     parser.add_argument("--silence", action="store_true", help="Mute terminal output")
+    parser.add_argument("--tag", type=str, default=None, help="write every output into a <tag> subfolder (e.g. mlp for the MLP baseline) instead of overwriting the HQNN outputs")
     args = parser.parse_args()
+    if args.write_to_file:
+        args.write_to_file = roc_utils.tag_path(args.write_to_file, args.tag)
     run_metric_attacks(args)

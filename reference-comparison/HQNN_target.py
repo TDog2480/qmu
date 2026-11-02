@@ -14,8 +14,9 @@ import pickle
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-from HQNN import ConvQNN, calculate_accuracy  
-from plot_utils import plot_training_curves  
+from HQNN import calculate_accuracy
+from models import build_model, MODEL_TYPES
+from plot_utils import plot_training_curves
 
 DATA_ROOT = os.path.join(REPO_ROOT, "data")
 
@@ -41,6 +42,9 @@ def process(args):
     # train_indices = random.sample(range(len(trainset)), args.n_train)
     # test_indices = random.sample(range(len(testset)), args.n_test)
     original_ckpt = torch.load(args.original_checkpoint, weights_only=False)
+    original_type = getattr(original_ckpt["args"], "model_type", "hqnn")
+    if original_type != args.model_type:
+        raise ValueError(f"reference model_type {args.model_type!r} does not match the original checkpoint's {original_type!r}")
     train_indices, test_indices = original_ckpt["indices"]
 
     # Training set excludes class 4 (this is the only intended difference from hqnn.py)
@@ -59,7 +63,7 @@ def process(args):
     test_u_loader = DataLoader(test_u_subset, batch_size=args.batch_size, shuffle=False)
 
     # Initialize model
-    model = ConvQNN(args)
+    model = build_model(args)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)
     # Train model
@@ -141,6 +145,8 @@ if __name__ == "__main__":
 
     parser.add_argument('-original_checkpoint', type=str, default=os.path.join(REPO_ROOT, 'checkpoints', 'original', 'model_HQNN_original_5_0.1_8.pth'))
 
+    parser.add_argument('-model_type', type=str, default='hqnn', choices=MODEL_TYPES, help="hqnn, or mlp for the classical baseline (must match the original checkpoint)")
+
     parser.add_argument('-n_qubit', type=int, default=8, help="n_qubit")
     parser.add_argument('-n_layers', type=int, default=5, help="n_layers")
 
@@ -161,6 +167,9 @@ if __name__ == "__main__":
     if not os.path.exists(args.save_path):
         os.makedirs(args.save_path)
 
-    args.name = f'_HQNN_target_{args.n_layers}_{args.learning_rate}_{args.batch_size}'
+    if args.model_type == 'hqnn':
+        args.name = f'_HQNN_target_{args.n_layers}_{args.learning_rate}_{args.batch_size}'
+    else:
+        args.name = f'_MLP_target_{args.learning_rate}_{args.batch_size}'
 
     process(args)
