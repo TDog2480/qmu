@@ -2,8 +2,7 @@
 Classical MLP membership inference attack for evaluating HQNN unlearning.
 
 Same pipeline as vqc_attack.py / qsvm_attack.py ; only the attack
-model differs: a classical MLP on the same 13-dim feature vector. This isolates the
-attack model as the only variable when comparing against the quantum attacks.
+model differs: a classical MLP on the same 13-dim feature vector.
 
 Saves:
     roc_curve_output/mlp_attack_roc.npz            original model (held-out rows)

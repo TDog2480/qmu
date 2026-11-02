@@ -31,10 +31,11 @@ from typing import List, Optional, Sequence
 import numpy as np
 import torch
 import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
+
+import roc_utils
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA_ROOT = os.path.join(REPO_ROOT, "data")
@@ -48,10 +49,13 @@ ATTACK_TRAIN_FRAC = 0.8
 # Deliberately independent of the target checkpoint's own seed
 ATTACK_SPLIT_SEED = 12345
 
+# ensure held-out rows do not affect bandwidth and C hyperparameter selection for quantum attacks
+SELECTION_FRAC = 0.2
+
 FEATURE_NAMES = [f"prob_{i}" for i in range(10)] + ["max_prob", "correct", "loss"]
 FEATURE_DIM = len(FEATURE_NAMES)
 
-# (key, human-readable label, is_member, is_forget_class) -- order defines group ids.
+# (key, label, is_member, is_forget_class) -- order defines group ids.
 GROUPS = (
     ("member_retain", "member, non-4 (retain)", True, False),
     ("member_forget", "member, class-4 (forget)", True, True),
@@ -200,6 +204,18 @@ def build_pool_spec(ckpt, data_root: str = DATA_ROOT, forget_class: int = FORGET
         testset=testset,
     )
 
+def selection_split(spec: PoolSpec, frac: float = SELECTION_FRAC,
+                    seed: int = ATTACK_SPLIT_SEED):
+    """Split the attack-train rows into (inner_rows, sel_rows), stratified by group.
+
+    Hyperparameter candidates are fit on inner_rows and scored on sel_rows; the
+    held-out rows stay untouched until final evaluation. Deterministic, so VQC and
+    QSVM select on the same rows.
+    """
+    fit_rows = np.flatnonzero(spec.attack_train_mask)
+    inner, sel = train_test_split(fit_rows, test_size=frac, random_state=seed,
+                                  stratify=spec.group[fit_rows])
+    return np.sort(inner), np.sort(sel)
 
 def describe_pool(spec: PoolSpec) -> None:
     print(f"\nPool: {spec.n} rows  ({int(spec.membership.sum())} members / "
@@ -262,7 +278,8 @@ def calibrate_threshold(scores: np.ndarray, membership: np.ndarray,
     the frozen threshold is really for.
     """
     sel = np.ones(len(scores), dtype=bool) if mask is None else mask
-    fpr, tpr, thresholds = roc_curve(membership[sel], scores[sel])
+    roc = roc_utils.compute_roc(scores[sel], membership[sel])
+    fpr, tpr, thresholds = roc["fpr"], roc["tpr"], roc["thresholds"]
     best = int(np.argmax((tpr + (1 - fpr)) / 2))
     thr = float(thresholds[best])
     if not np.isfinite(thr):  # roc_curve's first threshold is +inf
@@ -277,7 +294,7 @@ def membership_auc(scores: np.ndarray, spec: PoolSpec,
     y = spec.membership[sel]
     if len(np.unique(y)) < 2:
         return float("nan")
-    return float(roc_auc_score(y, scores[sel]))
+    return float(roc_utils.compute_roc(scores[sel], y)["auc"])
 
 
 def balanced_accuracy(scores: np.ndarray, spec: PoolSpec, threshold: float,

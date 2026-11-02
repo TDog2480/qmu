@@ -10,25 +10,13 @@ single scalar computed from the target model's softmax output:
   Modified-entropy     (Song & Mittal, 2021)  — lower mod-entropy -> member
 
 Thresholds are calibrated on the original model with ALL training samples
-as members and ALL test samples as non-members — the forget class appears on
-both sides, so the threshold cannot use "is this a 4" as a proxy for
-membership.  
-
-The frozen thresholds are then applied to four disjoint groups, for both the 
-original and the unlearned model:
-
-    member,     non-4   (retain)  — should stay classified "member" (utility)
-    member,     class-4 (forget)  — should drop to the class-4 non-member rate
-    non-member, non-4             — global false-positive baseline
-    non-member, class-4           — class-matched target for the forget row
-
-Successful unlearning: the unlearned model's forget-set membership rate
-approaches the class-4 *non-member* rate — not 50%, and not the global FPR,
-since class 4 may be intrinsically easier or harder than the average digit.
+as members and ALL test samples as non-members.
 
 Usage:
     python attacks/metric_attack.py
     python attacks/metric_attack.py --original path/to/orig.pth --unlearned path/to/unl.pth
+
+Optionally saves to file specified by --write-to-file
 """
 
 import argparse
@@ -39,7 +27,7 @@ import sys
 import numpy as np
 import torch
 import torch.nn.functional as F
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import accuracy_score
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
@@ -125,8 +113,7 @@ def calibrate_threshold(member_records, nonmember_records, key, higher_is_member
         if acc > best_acc:
             best_acc, best_thr = acc, float(thr)
 
-    score = all_vals if higher_is_member else -all_vals
-    auc = roc_auc_score(all_labels, score)
+    auc = roc_utils.compute_roc(all_vals, all_labels, higher_is_member)["auc"]
     return best_thr, best_acc, auc
 
 
@@ -136,7 +123,7 @@ def group_auc(member_records, nonmember_records, key, higher_is_member):
     nm_vals = np.array([r[key] for r in nonmember_records])
     vals   = np.concatenate([m_vals, nm_vals])
     labels = np.array([1] * len(m_vals) + [0] * len(nm_vals))
-    return float(roc_auc_score(labels, vals if higher_is_member else -vals))
+    return float(roc_utils.evaluate(m_vals, nm_vals, higher_is_member)["auc"])
 
 
 def membership_rate(records, key, threshold, higher_is_member):
@@ -269,7 +256,7 @@ def run_metric_attacks(args):
                               records_by_group["nonmember_c4"], key, higher),
         }
 
-    if args.silence:
+    if not args.silence:
         summary = {}
         auc_summary = {}
         for key, (higher, label) in ATTACKS.items():

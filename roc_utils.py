@@ -1,29 +1,20 @@
-
 """
-Shared ROC / AUC utilities for every membership-inference attack in this repo.
-Every attack reduces to one real-valued score per example plus a 0/1 membership
-label; nothing outside this module should call roc_curve / roc_auc_score directly.
+Shared ROC/AUC utilities for the membership-inference attacks.
 
-Attack scripts compute and persist curve
-    roc = roc_utils.compute_roc(scores, labels, higher_is_member)            # fpr, tpr, thresholds, auc
-    auc = roc_utils.auc_score(member_vals, nonmember_vals, higher_is_member)
-    res = roc_utils.evaluate(member_scores, nonmember_scores)                # + balanced_acc, tpr_at_fpr
-    roc_utils.save_attack_roc("vqc_attack", {"vqc": res}, model="original") # or model="unlearned"
+Contents:
+  - compute_roc / evaluate: ROC curve + AUC (+ balanced-acc, TPR@FPR).
+  - save_roc / save_attack_roc: persist ROC data to .npz under roc_curve_output/.
+  - load_roc / load_model_rocs: reload saved ROC files for plotting.
+  - plot_roc / plot_group / main: log-log ROC plots to roc_curve_output/*.pdf.
 
-save_attack_roc writes OUT_DIR/<source>_roc.npz (original) or <source>_roc_unlearned.npz.
-Plotting discovers every such file in OUT_DIR; no file list to maintain:
+Usage (CLI):
+  python roc_utils.py [--all | --metric-only | --quantum-only | --model-based-only]
+                      [--model original | unlearned | both]
 
-    python roc_utils.py [--all | --metric-only | --quantum-only | --model-based-only]
-                        [--model original|unlearned|both]
-
-    --metric-only       loss, max_conf, entropy, mod_entropy
-    --quantum-only      vqc, qsvm
-    --model-based-only  vqc, qsvm, mlp (trained attack models; held-out rows only)
-    --all               every key above (default)
-
-Output: OUT_DIR/<model>_<group>.pdf, plus an AUC table on stdout.
-    
+At the CLI it reads every *_roc.npz / *_roc_unlearned.npz already in
+roc_curve_output/ and writes a plot per model+group to roc_curve_output/.
 """
+
 
 import argparse
 import os
@@ -36,7 +27,7 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, roc_curve
 
 REPO_ROOT = Path(__file__).resolve().parent
-OUT_DIR = str(REPO_ROOT / "roc_curve_output")  # anchored to the repo, not the cwd
+OUT_DIR = str(REPO_ROOT / "roc_curve_output")
 
 METRIC_KEYS = ["loss", "max_conf", "entropy", "mod_entropy"]
 QUANTUM_KEYS = ["vqc", "qsvm"]
@@ -61,7 +52,8 @@ LABELS = {
     "shadow": "Shadow model (Shokri 2017)",
 }
  
- 
+## FUNCTIONS TO BE RE-USED BY ATTACK FILES
+
 def compute_roc(scores, labels, higher_is_member=True):
     scores = np.asarray(scores, dtype=float)
     if not higher_is_member:
@@ -69,29 +61,18 @@ def compute_roc(scores, labels, higher_is_member=True):
     fpr, tpr, thresholds = roc_curve(labels, scores)
     return {"fpr": fpr, "tpr": tpr, "thresholds": thresholds, "auc": roc_auc_score(labels, scores)}
 
-def auc_score(member_vals, nonmember_vals, higher_is_member=True):
-    """Threshold-free separability of members vs non-members on one scalar."""
-    vals = np.concatenate([np.asarray(member_vals, dtype=float), np.asarray(nonmember_vals, dtype=float)])
-    labels = np.r_[np.ones(len(member_vals)), np.zeros(len(nonmember_vals))]
-    return float(roc_auc_score(labels, vals if higher_is_member else -vals))
-
+## HELPER FUNCTIONS 
 
 def tpr_at_fpr(roc, max_fpr):
     """Best TPR with FPR <= max_fpr (roc_curve always includes fpr=0)."""
     return float(roc["tpr"][roc["fpr"] <= max_fpr].max())
-
-
-def balanced_acc(roc):
-    """Best (TPR + TNR) / 2 over all thresholds."""
-    return float(np.max((roc["tpr"] + 1.0 - roc["fpr"]) / 2.0))
-
 
 def evaluate(member_scores, nonmember_scores, higher_is_member=True, fprs=(0.01, 0.001)):
     """compute_roc on member/non-member scores, plus balanced_acc and tpr_at_fpr[f] for f in fprs."""
     scores = np.concatenate([np.asarray(member_scores, dtype=float), np.asarray(nonmember_scores, dtype=float)])
     labels = np.r_[np.ones(len(member_scores)), np.zeros(len(nonmember_scores))]
     roc = compute_roc(scores, labels, higher_is_member)
-    roc["balanced_acc"] = balanced_acc(roc)
+    roc["balanced_acc"] = float(np.max((roc["tpr"] + 1.0 - roc["fpr"]) / 2.0))
     roc["tpr_at_fpr"] = {f: tpr_at_fpr(roc, f) for f in fprs}
     return roc 
  
@@ -123,7 +104,7 @@ def save_attack_roc(source, roc_by_key, model="original"):
     unknown = [k for k in roc_by_key if k not in LABELS]
     if unknown:
         print(f"[warn] {source}: keys {unknown} have no LABELS entry and belong to no plot group")
-    save_roc(roc_by_key, roc_path(source, model)) 
+    save_roc(roc_by_key, os.path.join(OUT_DIR, f"{source}{MODEL_SUFFIX[model]}")) 
  
 def load_roc(path):
     data = np.load(path)
@@ -186,6 +167,10 @@ def plot_group(roc, group, model):
     print("-" * (width + 8))
     for key in keys:
         print(f"{LABELS.get(key, key):<{width}}  {roc[key]['auc']:>6.3f}")
+
+    plot_roc({k: roc[k] for k in keys}, os.path.join(OUT_DIR, f"{model}_{group}.pdf"))
+
+
 
 
 def main():

@@ -1,53 +1,22 @@
 """
 VQC-based membership inference attack for evaluating HQNN unlearning.
 
-Same attack model as before -- a 4-qubit variational circuit with data re-uploading,
-trained with BCE on the 13-dim MIA feature vector -- but rebuilt on the shared
-evaluation pool (Part 4) so its numbers line up with the threshold attacks, the MLP,
-and the QSVM attack.
+4-qubit variational circuit with data re-uploading, trained with BCE on the 13-dim MIA feature vector -- 
+rebuilt on the shared evaluation pool from attack_scoring
 
-What changed from the previous version:
-
-  * The member side is no longer capped at indices[0][:500] and no longer filtered
-    to exclude class 4. Members and non-members are the target's full saved train /
-    test indices (500/500 after the Part 1 retrain), class 4 present on both sides.
-
-  * The single accuracy number on the ~88-sample label-4 mix is gone, and with it
-    the misleading per-epoch "Label4 Acc" -- that set overlapped the training split
-    almost entirely, so it read as a generalization metric while mostly reporting
-    training fit. Progress is now tracked as training accuracy on the fit rows and
-    AUC on the held-out rows, which are actually different things.
-
-  * Results are the 4-group table: member/non-4 (retain), member/class-4 (forget),
-    non-member/non-4, non-member/class-4, for the original and the unlearned model.
-
-  * The 800/200 attack-model split is stratified by group and shared with the other
-    attacks (mia_common.ATTACK_SPLIT_SEED). It is the attack model's own
-    train/validation split and carries no membership semantics -- both halves
-    contain members and non-members.
-
-  * The bandwidth sweep is scored by held-out AUC rather than accuracy, so a
-    collapsed circuit that predicts one class cannot win the sweep.
-
-  * The decision threshold is calibrated once on the original model and frozen, then
-    applied unchanged to the unlearned model.
-
-Bandwidth is selected on the held-out rows, so the held-out AUC reported at the end
-is mildly optimistic (one hyperparameter's worth). Nothing else touches it.
+Bandwidth is selected on selection slice of attack training rows, so the held-out AUC reported at the end
+is not selection-biased.
 
 Usage:
-    python vqc_refactored.py --original model_0324_original_5_0.1_8.pth \
-                         --unlearned result/seed/model_MU_gradient_U8R1.pth
-"""
+    python attacks/vqc_attack.py 
 
-"""
-NOTE from changes 9/27:
- 
-Saves ROC data for both models, on the same held-out rows with the same frozen attack model:
-    roc_curve_output/vqc_attack_roc.npz            original model
-    roc_curve_output/vqc_attack_roc_unlearned.npz  unlearned model
-Also saves attack_model_vqc.pth, attack_scaler_vqc.pkl and scores_vqc.npz to roc_curve_output/.
-Then run roc_utils.py (original) and roc_unlearned_plot.py (unlearned) to plot.
+Saves:
+    roc_curve_output/vqc_attack_roc.npz            
+    roc_curve_output/vqc_attack_roc_unlearned.npz  
+    
+    checkpoints/attack-models/attack_scaler_vqc.pkl
+    checkpoints/attack-models/attack_model_vqc.pth
+
 """
 
 import argparse
@@ -60,7 +29,6 @@ import pennylane as qml
 import torch
 import torch.nn as nn
 from pennylane.templates.embeddings import AngleEmbedding
-from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
  
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -146,11 +114,6 @@ def vqc_scores(model, x_tensor):
  
 def train_vqc(x_fit, y_fit, n_epochs, x_val=None, y_val=None, print_every=None):
     """Train a fresh AttackVQC on the attack-train rows.
- 
-    Progress reporting keeps two things apart that the old loop merged: training
-    accuracy on the rows being fit (free -- reuses the forward pass already computed
-    for the loss) and AUC on the held-out rows, which is the only number that says
-    anything about generalization.
     """
     model = AttackVQC()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
@@ -169,13 +132,13 @@ def train_vqc(x_fit, y_fit, n_epochs, x_val=None, y_val=None, print_every=None):
             fit_acc = float(((outputs.detach().numpy().reshape(-1) > 0.5).astype(int) == y_fit_np).mean())
             msg = f"Epoch {epoch + 1}, Loss: {loss.item():.4f}, Fit Acc: {fit_acc * 100:.2f}%"
             if x_val is not None:
-                val_auc = roc_auc_score(y_val, vqc_scores(model, x_val))
+                val_auc = roc_utils.compute_roc(vqc_scores(model, x_val), y_val)["auc"]
                 msg += f", Held-out AUC: {val_auc:.3f}"
             print(msg)
  
     val_auc = float("nan")
     if x_val is not None and len(np.unique(y_val)) > 1:
-        val_auc = float(roc_auc_score(y_val, vqc_scores(model, x_val)))
+        val_auc = float(roc_utils.compute_roc(vqc_scores(model, x_val), y_val)["auc"])
     return model, val_auc
  
  
@@ -226,22 +189,26 @@ def main():
     scaler = StandardScaler().fit(X_original[fit_rows])
     y_fit = torch.tensor(spec.membership[fit_rows], dtype=torch.float32).unsqueeze(1)
     y_val = spec.membership[val_rows]
+
+    inner_rows, sel_rows = attack_scoring.selection_split(spec)
+    y_inner = torch.tensor(spec.membership[inner_rows], dtype=torch.float32).unsqueeze(1)
+    y_sel = spec.membership[sel_rows]
  
     # ------------------------------------------------------------------
-    # Sweep embedding bandwidth with a short proxy budget, scored by held-out AUC
+    # Sweep embedding bandwidth with a short proxy budget, scored by selection slice
     # ------------------------------------------------------------------
     best_auc, best_bandwidth = -1.0, None
     print(f"\nSweeping bandwidth {BANDWIDTHS} with {SWEEP_EPOCHS}-epoch proxy runs on "
-          f"{len(fit_rows)} fit / {len(val_rows)} held-out rows ...")
+          f"{len(inner_rows)} inner-fit / {len(sel_rows)} selection rows (both from the attack-train split) ...")
     for bandwidth in BANDWIDTHS:
-        x_fit_t = as_tensor(prepare_inputs(X_original[fit_rows], scaler, bandwidth))
-        x_val_t = as_tensor(prepare_inputs(X_original[val_rows], scaler, bandwidth))
-        _, val_auc = train_vqc(x_fit_t, y_fit, SWEEP_EPOCHS, x_val_t, y_val)
-        print(f"  bandwidth={bandwidth:.2f}  held-out AUC={val_auc:.3f}")
-        if val_auc > best_auc:
-            best_auc, best_bandwidth = val_auc, bandwidth
+        x_inner_t = as_tensor(prepare_inputs(X_original[inner_rows], scaler, bandwidth))
+        x_sel_t = as_tensor(prepare_inputs(X_original[sel_rows], scaler, bandwidth))
+        _, sel_auc = train_vqc(x_inner_t, y_inner, SWEEP_EPOCHS, x_sel_t, y_sel)
+        print(f"  bandwidth={bandwidth:.2f}  selection AUC={sel_auc:.3f}")
+        if np.isfinite(sel_auc) and sel_auc > best_auc:
+            best_auc, best_bandwidth = sel_auc, bandwidth
  
-    print(f"Best bandwidth: {best_bandwidth} (proxy held-out AUC={best_auc:.3f})")
+    print(f"Best bandwidth: {best_bandwidth} (proxy selection AUC={best_auc:.3f})")
  
     # ------------------------------------------------------------------
     # Full training run at the selected bandwidth
@@ -289,6 +256,8 @@ def main():
         pickle.dump({
             "scaler": scaler,
             "bandwidth": best_bandwidth,
+            "selection_auc": best_auc,
+            "selection_frac": attack_scoring.SELECTION_FRAC,
             "threshold": threshold,
             "heldout_auc": final_val_auc,
             "target_checkpoint": args.original,
