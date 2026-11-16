@@ -28,6 +28,7 @@ from sklearn.metrics import roc_auc_score, roc_curve
 
 REPO_ROOT = Path(__file__).resolve().parent
 OUT_DIR = str(REPO_ROOT / "roc_curve_output")
+TIFF_DPI = 600  # 7 in figure -> 4200 x 4200 px; 300 DPI at 14 in wide
 
 METRIC_KEYS = ["loss", "max_conf", "entropy", "mod_entropy"]
 QUANTUM_KEYS = ["vqc", "qsvm"]
@@ -112,15 +113,20 @@ def load_roc(path):
     return {key: {"fpr": data[f"{key}_fpr"], "tpr": data[f"{key}_tpr"], "auc": float(data[f"{key}_auc"])}
             for key in keys}
 
-def load_model_rocs(model):
-    """Merge every OUT_DIR/*<suffix> file for this model into one {key: roc} dict."""
+def load_model_rocs(model, scan_dir=None):
+    """Merge every <scan_dir>/*<suffix> file for this model into one {key: roc} dict.
+
+    scan_dir defaults to OUT_DIR; pass the flagged per-seed directory
+    (e.g. OUT_DIR/seed0) to plot that seed's tagged runs. Seed subfolders are
+    otherwise skipped by the top-level scan (see tag_path)."""
+    scan_dir = scan_dir or OUT_DIR
     roc = {}
-    if not os.path.isdir(OUT_DIR):
+    if not os.path.isdir(scan_dir):
         return roc
-    for name in sorted(os.listdir(OUT_DIR)):
+    for name in sorted(os.listdir(scan_dir)):
         if not name.endswith(MODEL_SUFFIX[model]):
             continue
-        for key, d in load_roc(os.path.join(OUT_DIR, name)).items():
+        for key, d in load_roc(os.path.join(scan_dir, name)).items():
             if key in roc:
                 print(f"[warn] key '{key}' found in multiple {model} files; using {name}")
             roc[key] = d
@@ -147,16 +153,20 @@ def plot_roc(roc_by_key, out_path, title=None, labels=None, eps=1e-3):
     fig.tight_layout()
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     fig.savefig(out_path)
+    tiff_path = str(Path(out_path).with_suffix(".tiff"))
+    fig.savefig(tiff_path, dpi=TIFF_DPI, pil_kwargs={"compression": "tiff_lzw"})
+    print(f"[save] {tiff_path}")
     plt.close(fig)
     print(f"[save] {out_path}")
  
  
-def plot_group(roc, group, model):
-    """Plot one group's keys for one model to OUT_DIR/<model>_<group>.pdf."""
+def plot_group(roc, group, model, out_dir=None):
+    """Plot one group's keys for one model to <out_dir>/<model>_<group>.pdf."""
+    out_dir = out_dir or OUT_DIR
     keys = [k for k in GROUPS[group] if k in roc]
     missing = [k for k in GROUPS[group] if k not in roc]
     if not keys:
-        print(f"\n[skip] {model}/{group}: no saved curves in {OUT_DIR}")
+        print(f"\n[skip] {model}/{group}: no saved curves in {out_dir}")
         return
     if missing:
         print(f"\n[note] {model}/{group}: no saved curves for {missing}")
@@ -168,7 +178,7 @@ def plot_group(roc, group, model):
     for key in keys:
         print(f"{LABELS.get(key, key):<{width}}  {roc[key]['auc']:>6.3f}")
 
-    plot_roc({k: roc[k] for k in keys}, os.path.join(OUT_DIR, f"{model}_{group}.pdf"))
+    plot_roc({k: roc[k] for k in keys}, os.path.join(out_dir, f"{model}_{group}.pdf"))
 
 
 
@@ -181,7 +191,15 @@ def main():
     sel.add_argument("--quantum-only", action="store_true", help="VQC, QSVM")
     sel.add_argument("--model-based-only", action="store_true", help="VQC, QSVM, classical MLP")
     parser.add_argument("--model", choices=["original", "unlearned", "both"], default="both")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="plot a single tagged seed's ROC files (e.g. --seed 0 reads "
+                             "roc_curve_output/seed0/*.npz and writes plots into that folder). "
+                             "If omitted, plots the untagged top-level outputs in roc_curve_output/.")
     args = parser.parse_args()
+
+    # Optional per-seed directory: plots that seed's tagged runs instead of the
+    # untagged top-level outputs in OUT_DIR (seed subfolders are normally skipped).
+    out_dir = os.path.join(OUT_DIR, f"seed{args.seed}") if args.seed is not None else OUT_DIR
 
     group = ("metric" if args.metric_only else
              "quantum" if args.quantum_only else
@@ -189,7 +207,7 @@ def main():
              "all")
     models = ["original", "unlearned"] if args.model == "both" else [args.model]
     for model in models:
-        plot_group(load_model_rocs(model), group, model)
+        plot_group(load_model_rocs(model, scan_dir=out_dir), group, model, out_dir=out_dir)
  
 if __name__ == "__main__":
     main()
