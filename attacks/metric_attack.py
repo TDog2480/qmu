@@ -242,9 +242,6 @@ def run_metric_attacks(args):
         return {g: membership_rate(records_by_group[g], key, thresholds[key], higher)
                 for g in GROUPS}
 
-    print(f"\n{'='*76}")
-    print("Membership rate by group  (fraction the frozen threshold calls 'member')")
-    print(f"{'='*76}")
     # Class-matched AUCs: member vs non-member within the same class slice.
     #   non-4   -> stay at the original level = utility preserved
     #   class-4 -> drop to ~0.5 = forgotten
@@ -256,9 +253,24 @@ def run_metric_attacks(args):
                               records_by_group["nonmember_c4"], key, higher),
         }
 
+    # Statistics are always computed, independently of whether they are printed
+    # (--silence) and/or written to a file (--write-to-file). Decoupling the two
+    # means any combination of --silence / --write-to-file works.
+    summary = {}
+    auc_summary = {}
+    for key, (higher, label) in ATTACKS.items():
+        o = rates(orig, key, higher)
+        u = rates(unl,  key, higher)
+        gap = u["member_c4"] - u["nonmember_c4"]
+        summary[key] = (o["member_c4"], u["member_c4"], u["nonmember_c4"], gap)
+        o_auc = class_aucs(orig, key, higher)
+        u_auc = class_aucs(unl,  key, higher)
+        auc_summary[key] = (o_auc, u_auc)
+
     if not args.silence:
-        summary = {}
-        auc_summary = {}
+        print(f"\n{'='*76}")
+        print("Membership rate by group  (fraction the frozen threshold calls 'member')")
+        print(f"{'='*76}")
         for key, (higher, label) in ATTACKS.items():
             o = rates(orig, key, higher)
             u = rates(unl,  key, higher)
@@ -269,14 +281,12 @@ def run_metric_attacks(args):
                 print(f"  {GROUP_LABEL[g]:<32} {sizes[g]:>5}  "
                     f"{o[g]*100:>7.1f}%  {u[g]*100:>9.1f}%")
             gap = u["member_c4"] - u["nonmember_c4"]
-            summary[key] = (o["member_c4"], u["member_c4"], u["nonmember_c4"], gap)
             print(f"  -> forget rate {o['member_c4']*100:.1f}% -> {u['member_c4']*100:.1f}%   "
                 f"(class-4 non-member baseline {u['nonmember_c4']*100:.1f}%,  "
                 f"residual gap {gap*100:+.1f} pts)")
 
             o_auc = class_aucs(orig, key, higher)
             u_auc = class_aucs(unl,  key, higher)
-            auc_summary[key] = (o_auc, u_auc)
             print(f"  {'AUC (member vs non-member)':<38} {'orig':>8}  {'unlearned':>10}")
             print(f"  {'-'*60}")
             print(f"  {'non-4   (member vs non-member)':<38} {o_auc['non4']:>8.3f}  {u_auc['non4']:>10.3f}")
