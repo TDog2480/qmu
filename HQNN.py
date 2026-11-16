@@ -213,9 +213,9 @@ if __name__ == "__main__":
         os.makedirs(args.save_path)
 
     if args.model_type == 'hqnn':
-        args.name = f'_HQNN_original_{args.n_layers}_{args.learning_rate}_{args.batch_size}'
+        args.name = f'_HQNN_original_{args.n_layers}_{args.learning_rate}_{args.batch_size}_seed{args.seed}'
     else:
-        args.name = f'_MLP_original_{args.learning_rate}_{args.batch_size}'
+        args.name = f'_MLP_original_{args.learning_rate}_{args.batch_size}_seed{args.seed}'
 
     process(args)
 
